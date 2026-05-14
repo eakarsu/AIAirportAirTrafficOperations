@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import DetailModal from '../components/DetailModal';
 import FormModal from '../components/FormModal';
-import AIAnalysis from '../components/AIAnalysis';
 
 const detailFields = [
   { key: 'runway_id', label: 'Runway' },
@@ -37,8 +36,9 @@ function RunwayUtilization({ token, api }) {
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const fetchData = useCallback(async () => {
-    const res = await fetch(`${api}/api/runways`, { headers: { Authorization: `Bearer ${token}` } });
-    setItems(await res.json());
+    const res = await fetch(`${api}/api/runways?page=1&limit=100`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json();
+    setItems(Array.isArray(data) ? data : (data.data || []));
   }, [api, token]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -72,11 +72,18 @@ function RunwayUtilization({ token, api }) {
     setAiData(null);
     try {
       const res = await fetch(`${api}/api/ai/optimize-runways`, { method: 'POST', headers });
-      setAiData(await res.json());
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'AI analysis failed');
+      setAiData(data);
     } catch (err) {
-      setAiData({ analysis: 'Error: ' + err.message, timestamp: new Date().toISOString(), model: 'error' });
+      setAiData({ raw_response: 'Error: ' + err.message });
     }
     setAiLoading(false);
+  };
+
+  const severityColor = (s) => {
+    const m = { low: '#22c55e', medium: '#f59e0b', high: '#f97316', critical: '#ef4444' };
+    return m[(s || '').toLowerCase()] || '#94a3b8';
   };
 
   return (
@@ -126,7 +133,118 @@ function RunwayUtilization({ token, api }) {
         </table>
       </div>
 
-      <AIAnalysis data={aiData} loading={aiLoading} />
+      {aiLoading && (
+        <div className="ai-analysis-container">
+          <div className="ai-loading"><div className="spinner"></div><span>AI is optimizing runway utilization...</span></div>
+        </div>
+      )}
+
+      {aiData && !aiLoading && (
+        <div style={{ marginTop: 24 }}>
+          {(aiData.utilization_score !== undefined || aiData.throughput_efficiency_pct !== undefined) && (
+            <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
+              {aiData.utilization_score !== undefined && (
+                <div style={{ flex: 1, minWidth: 180, padding: 20, borderRadius: 12, background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.3)', textAlign: 'center' }}>
+                  <div style={{ fontSize: 12, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 8 }}>Utilization Score</div>
+                  <div style={{ fontSize: 48, fontWeight: 800, color: aiData.utilization_score > 70 ? '#22c55e' : aiData.utilization_score > 40 ? '#f59e0b' : '#ef4444' }}>{aiData.utilization_score}</div>
+                  {aiData.estimated_delay_reduction_min != null && (
+                    <div style={{ color: '#94a3b8', marginTop: 8, fontSize: 13 }}>Est. delay reduction: <strong style={{ color: '#22c55e' }}>{aiData.estimated_delay_reduction_min} min</strong></div>
+                  )}
+                </div>
+              )}
+              {aiData.throughput_efficiency_pct !== undefined && (
+                <div style={{ flex: 1, minWidth: 180, padding: 20, borderRadius: 12, background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.3)', textAlign: 'center' }}>
+                  <div style={{ fontSize: 12, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 8 }}>Throughput Efficiency</div>
+                  <div style={{ fontSize: 48, fontWeight: 800, color: '#22c55e' }}>{aiData.throughput_efficiency_pct}%</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {Array.isArray(aiData.safety_flags) && aiData.safety_flags.length > 0 && (
+            <div className="data-table-container" style={{ marginBottom: 16 }}>
+              <h3 style={{ margin: '0 0 12px', color: '#fff' }}><i className="fas fa-exclamation-triangle" style={{ color: '#ef4444' }}></i> Safety Flags</h3>
+              <table className="data-table">
+                <thead><tr><th>Runway</th><th>Issue</th><th>Severity</th><th>Action Required</th></tr></thead>
+                <tbody>
+                  {aiData.safety_flags.map((f, i) => (
+                    <tr key={i}>
+                      <td><strong>{f.runway_id}</strong></td>
+                      <td style={{ fontSize: 13 }}>{f.issue}</td>
+                      <td><span className="status-badge" style={{ background: severityColor(f.severity), color: '#fff' }}>{f.severity}</span></td>
+                      <td style={{ fontSize: 13, color: '#f59e0b' }}>{f.action_required}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {Array.isArray(aiData.capacity_recommendations) && aiData.capacity_recommendations.length > 0 && (
+            <div className="data-table-container" style={{ marginBottom: 16 }}>
+              <h3 style={{ margin: '0 0 12px', color: '#fff' }}><i className="fas fa-chart-bar" style={{ color: '#38bdf8' }}></i> Capacity Recommendations</h3>
+              <table className="data-table">
+                <thead><tr><th>Runway</th><th>Current Ops/Hr</th><th>Max Capacity</th><th>Recommendation</th></tr></thead>
+                <tbody>
+                  {aiData.capacity_recommendations.map((r, i) => (
+                    <tr key={i}>
+                      <td><strong>{r.runway_id}</strong></td>
+                      <td>{r.current_ops_per_hour}</td>
+                      <td>{r.max_capacity_per_hour}</td>
+                      <td style={{ fontSize: 13 }}>{r.recommendation}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {Array.isArray(aiData.weather_impacts) && aiData.weather_impacts.length > 0 && (
+            <div className="data-table-container" style={{ marginBottom: 16 }}>
+              <h3 style={{ margin: '0 0 12px', color: '#fff' }}><i className="fas fa-cloud-rain" style={{ color: '#f59e0b' }}></i> Weather Impacts</h3>
+              <table className="data-table">
+                <thead><tr><th>Runway</th><th>Condition</th><th>Impact</th><th>Mitigation</th></tr></thead>
+                <tbody>
+                  {aiData.weather_impacts.map((w, i) => (
+                    <tr key={i}>
+                      <td><strong>{w.runway_id}</strong></td>
+                      <td>{w.condition}</td>
+                      <td style={{ fontSize: 13 }}>{w.impact}</td>
+                      <td style={{ fontSize: 13, color: '#38bdf8' }}>{w.mitigation}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {Array.isArray(aiData.sequencing_improvements) && aiData.sequencing_improvements.length > 0 && (
+            <div style={{ padding: 16, borderRadius: 8, background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)', marginBottom: 16 }}>
+              <h4 style={{ color: '#22c55e', margin: '0 0 8px' }}><i className="fas fa-sort-amount-down"></i> Sequencing Improvements</h4>
+              <ul style={{ margin: 0, paddingLeft: 20, color: '#94a3b8', fontSize: 13 }}>
+                {aiData.sequencing_improvements.map((s, i) => (
+                  <li key={i} style={{ marginBottom: 4 }}>
+                    <strong style={{ color: '#e2e8f0' }}>{s.runway_id}</strong>: {s.current_sequence} → <strong style={{ color: '#22c55e' }}>{s.optimized_sequence}</strong>
+                    {s.time_saving_min && <span style={{ color: '#22c55e' }}> ({s.time_saving_min} min saved)</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {aiData.summary && (
+            <div style={{ padding: 16, borderRadius: 8, background: 'rgba(148,163,184,0.05)', border: '1px solid rgba(148,163,184,0.15)', color: '#cbd5e1', fontSize: 14 }}>
+              {aiData.summary}
+            </div>
+          )}
+
+          {aiData.raw_response && (
+            <div className="ai-analysis-container">
+              <pre style={{ whiteSpace: 'pre-wrap', color: '#cbd5e1', fontSize: 13 }}>{aiData.raw_response}</pre>
+            </div>
+          )}
+        </div>
+      )}
 
       {selected && (
         <DetailModal

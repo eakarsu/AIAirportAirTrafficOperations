@@ -1,13 +1,50 @@
 const express = require('express');
 const router = express.Router();
+const { body } = require('express-validator');
 const pool = require('../db');
 const { authenticateToken } = require('../middleware/auth');
+const { generalLimiter } = require('../middleware/rateLimiter');
+const { validate } = require('../middleware/validate');
 
-// Get all flights
+router.use(generalLimiter);
+
+const flightValidation = [
+  body('flight_number').trim().notEmpty().withMessage('flight_number is required'),
+  body('airline').trim().notEmpty().withMessage('airline is required'),
+  body('origin').trim().notEmpty().isLength({ min: 2, max: 10 }).withMessage('origin IATA is required'),
+  body('destination').trim().notEmpty().isLength({ min: 2, max: 10 }).withMessage('destination IATA is required'),
+  body('scheduled_time').isISO8601().withMessage('scheduled_time must be a valid datetime'),
+  body('flight_type').isIn(['departure', 'arrival']).withMessage('flight_type must be departure or arrival'),
+  body('aircraft_type').trim().notEmpty().withMessage('aircraft_type is required'),
+  body('status').optional().isIn(['on_time', 'delayed', 'boarding', 'departed', 'landed', 'cancelled', 'diverted']).withMessage('invalid status'),
+];
+
+// Get all flights with pagination
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM flight_schedule ORDER BY scheduled_time ASC');
-    res.json(result.rows);
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const offset = (page - 1) * limit;
+
+    // Optional filter
+    const type = req.query.type; // 'departure' | 'arrival'
+    let whereClause = '';
+    const params = [limit, offset];
+    if (type && ['departure', 'arrival'].includes(type)) {
+      whereClause = 'WHERE flight_type = $3';
+      params.push(type);
+    }
+
+    const [countResult, dataResult] = await Promise.all([
+      pool.query(`SELECT COUNT(*) FROM flight_schedule ${type ? 'WHERE flight_type = $1' : ''}`, type ? [type] : []),
+      pool.query(`SELECT * FROM flight_schedule ${whereClause} ORDER BY scheduled_time ASC LIMIT $1 OFFSET $2`, params),
+    ]);
+
+    const total = parseInt(countResult.rows[0].count);
+    res.json({
+      data: dataResult.rows,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -25,7 +62,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
 });
 
 // Create flight
-router.post('/', authenticateToken, async (req, res) => {
+router.post('/', authenticateToken, flightValidation, validate, async (req, res) => {
   try {
     const { flight_number, airline, origin, destination, scheduled_time, flight_type, aircraft_type, terminal, gate, status } = req.body;
     const result = await pool.query(
@@ -40,7 +77,7 @@ router.post('/', authenticateToken, async (req, res) => {
 });
 
 // Update flight
-router.put('/:id', authenticateToken, async (req, res) => {
+router.put('/:id', authenticateToken, flightValidation, validate, async (req, res) => {
   try {
     const { flight_number, airline, origin, destination, scheduled_time, flight_type, aircraft_type, terminal, gate, status } = req.body;
     const result = await pool.query(

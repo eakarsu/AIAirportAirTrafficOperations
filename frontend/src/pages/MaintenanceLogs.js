@@ -34,8 +34,9 @@ function MaintenanceLogs({ token, api }) {
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const fetchData = useCallback(async () => {
-    const res = await fetch(`${api}/api/maintenance`, { headers: { Authorization: `Bearer ${token}` } });
-    setItems(await res.json());
+    const res = await fetch(`${api}/api/maintenance?page=1&limit=100`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json();
+    setItems(Array.isArray(data) ? data : (data.data || []));
   }, [api, token]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -64,11 +65,29 @@ function MaintenanceLogs({ token, api }) {
     setShowForm(true);
   };
 
+  const exportCSV = () => {
+    const hdrs = ['Equipment Type', 'Equipment ID', 'Maintenance Type', 'Description', 'Assigned To', 'Scheduled Date', 'Priority', 'Status', 'Location'];
+    const rows = items.map(i => [
+      i.equipment_type, i.equipment_id, i.maintenance_type,
+      (i.description || '').replace(/\n/g, ' '), i.assigned_to || '',
+      new Date(i.scheduled_date).toLocaleString(), i.priority, i.status, i.location || '',
+    ]);
+    const csv = [hdrs, ...rows].map(r => r.map(v => `"${(v ?? '').toString().replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `maintenance-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+  };
+
   return (
     <div>
       <div className="page-header">
         <h1><i className="fas fa-wrench"></i> Maintenance Logs</h1>
         <div className="header-actions">
+          <button className="btn-cancel" onClick={exportCSV} style={{ fontSize: 13 }}>
+            <i className="fas fa-download"></i> Export CSV
+          </button>
           <button className="btn-primary" onClick={() => { setEditItem(null); setShowForm(true); }}>
             <i className="fas fa-plus"></i> New Work Order
           </button>

@@ -33,15 +33,28 @@ const formFields = [
 
 function WeatherDashboard({ token, api }) {
   const [items, setItems] = useState([]);
+  const [pagination, setPagination] = useState({ page: 1, limit: 20, total: 0, totalPages: 1 });
+  const [page, setPage] = useState(1);
   const [selected, setSelected] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
+  const [loading, setLoading] = useState(false);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const fetchData = useCallback(async () => {
-    const res = await fetch(`${api}/api/weather`, { headers: { Authorization: `Bearer ${token}` } });
-    setItems(await res.json());
-  }, [api, token]);
+    setLoading(true);
+    try {
+      const res = await fetch(`${api}/api/weather?page=${page}&limit=20`, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (data.data) {
+        setItems(data.data);
+        setPagination(data.pagination);
+      } else {
+        setItems(Array.isArray(data) ? data : []);
+      }
+    } catch (err) { console.error(err); }
+    setLoading(false);
+  }, [api, token, page]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -69,6 +82,7 @@ function WeatherDashboard({ token, api }) {
     setShowForm(true);
   };
 
+  // Use items for display but fetch all METARs from first page for the summary card
   const latestMetar = items.find(i => i.report_type === 'METAR');
   const notams = items.filter(i => i.report_type === 'NOTAM');
 
@@ -131,6 +145,10 @@ function WeatherDashboard({ token, api }) {
         </div>
       )}
 
+      {loading && (
+        <div className="ai-loading" style={{ margin: '20px 0' }}><div className="spinner"></div><span>Loading...</span></div>
+      )}
+
       <div className="data-table-container" style={{ marginTop: '20px' }}>
         <table className="data-table">
           <thead>
@@ -161,6 +179,18 @@ function WeatherDashboard({ token, api }) {
           </tbody>
         </table>
       </div>
+
+      {pagination.totalPages > 1 && (
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 16, alignItems: 'center' }}>
+          <button className="btn-cancel" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>
+            <i className="fas fa-chevron-left"></i> Prev
+          </button>
+          <span style={{ color: '#94a3b8' }}>Page {pagination.page} of {pagination.totalPages} ({pagination.total} total)</span>
+          <button className="btn-cancel" disabled={page >= pagination.totalPages} onClick={() => setPage(p => Math.min(pagination.totalPages, p + 1))}>
+            Next <i className="fas fa-chevron-right"></i>
+          </button>
+        </div>
+      )}
 
       {selected && (
         <DetailModal

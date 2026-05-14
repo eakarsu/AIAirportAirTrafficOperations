@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 function Statistics({ token, api }) {
+  const navigate = useNavigate();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -141,6 +143,32 @@ function Statistics({ token, api }) {
     <div>
       <div className="page-header">
         <h1><i className="fas fa-chart-bar"></i> Airport Statistics</h1>
+      </div>
+
+      {/* Quick nav to sub-pages */}
+      <div style={{ display: 'flex', gap: 12, marginBottom: 24 }}>
+        <div
+          onClick={() => navigate('/statistics/passenger-experience')}
+          style={{ flex: 1, padding: 16, borderRadius: 10, background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.25)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12 }}
+        >
+          <i className="fas fa-smile" style={{ color: '#38bdf8', fontSize: 24 }}></i>
+          <div>
+            <div style={{ color: '#e2e8f0', fontWeight: 600 }}>Passenger Experience</div>
+            <div style={{ color: '#64748b', fontSize: 13 }}>Satisfaction scores, wait times, NPS</div>
+          </div>
+          <i className="fas fa-arrow-right" style={{ color: '#38bdf8', marginLeft: 'auto' }}></i>
+        </div>
+        <div
+          onClick={() => navigate('/statistics/carbon')}
+          style={{ flex: 1, padding: 16, borderRadius: 10, background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12 }}
+        >
+          <i className="fas fa-leaf" style={{ color: '#22c55e', fontSize: 24 }}></i>
+          <div>
+            <div style={{ color: '#e2e8f0', fontWeight: 600 }}>Carbon Dashboard</div>
+            <div style={{ color: '#64748b', fontSize: 13 }}>Emissions, fuel usage, sustainability</div>
+          </div>
+          <i className="fas fa-arrow-right" style={{ color: '#22c55e', marginLeft: 'auto' }}></i>
+        </div>
       </div>
 
       {/* Overview Cards */}

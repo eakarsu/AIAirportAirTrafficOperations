@@ -33,8 +33,9 @@ function IncidentReports({ token, api }) {
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const fetchData = useCallback(async () => {
-    const res = await fetch(`${api}/api/incidents`, { headers: { Authorization: `Bearer ${token}` } });
-    setItems(await res.json());
+    const res = await fetch(`${api}/api/incidents?page=1&limit=100`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json();
+    setItems(Array.isArray(data) ? data : (data.data || []));
   }, [api, token]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -66,6 +67,20 @@ function IncidentReports({ token, api }) {
   const openCount = items.filter(i => i.status === 'open' || i.status === 'investigating').length;
   const criticalCount = items.filter(i => i.severity === 'critical' || i.severity === 'high').length;
 
+  const exportCSV = () => {
+    const hdrs = ['Type', 'Severity', 'Location', 'Reported By', 'Flight', 'Status', 'Reported At', 'Resolution'];
+    const rows = items.map(i => [
+      i.incident_type, i.severity, i.location, i.reported_by, i.flight_number || '',
+      i.status, new Date(i.reported_at).toLocaleString(), i.resolution || '',
+    ]);
+    const csv = [hdrs, ...rows].map(r => r.map(v => `"${(v ?? '').toString().replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `incidents-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+  };
+
   return (
     <div>
       <div className="page-header">
@@ -77,6 +92,9 @@ function IncidentReports({ token, api }) {
           {criticalCount > 0 && (
             <span className="incident-counter critical"><i className="fas fa-circle"></i> {criticalCount} High/Critical</span>
           )}
+          <button className="btn-cancel" onClick={exportCSV} style={{ fontSize: 13 }}>
+            <i className="fas fa-download"></i> Export CSV
+          </button>
           <button className="btn-primary" onClick={() => { setEditItem(null); setShowForm(true); }}>
             <i className="fas fa-plus"></i> Report Incident
           </button>

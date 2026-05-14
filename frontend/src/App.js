@@ -12,6 +12,24 @@ import WeatherDashboard from './pages/WeatherDashboard';
 import IncidentReports from './pages/IncidentReports';
 import MaintenanceLogs from './pages/MaintenanceLogs';
 import Statistics from './pages/Statistics';
+import GateConflicts from './pages/GateConflicts';
+import ConnectionAnalysis from './pages/ConnectionAnalysis';
+import WeatherRouting from './pages/WeatherRouting';
+import AIHistory from './pages/AIHistory';
+import CrewCrossTraining from './pages/CrewCrossTraining';
+import CostOptimization from './pages/CostOptimization';
+import IncidentPrediction from './pages/IncidentPrediction';
+import BaggageReconciliation from './pages/BaggageReconciliation';
+import Sustainability from './pages/Sustainability';
+import ShiftHandover from './pages/ShiftHandover';
+import PredictiveMaintenance from './pages/PredictiveMaintenance';
+import NotamBriefing from './pages/NotamBriefing';
+import RunwaySimulator from './pages/RunwaySimulator';
+import PassengerExperience from './pages/PassengerExperience';
+import CarbonDashboard from './pages/CarbonDashboard';
+import TrafficForecast from './pages/TrafficForecast';
+import EmergencyResponse from './pages/EmergencyResponse';
+import AIBacklogTools from './pages/AIBacklogTools';
 import Navbar from './components/Navbar';
 import './App.css';
 
@@ -61,6 +79,24 @@ function App() {
             <Route path="/incidents" element={<IncidentReports token={token} api={API} />} />
             <Route path="/maintenance" element={<MaintenanceLogs token={token} api={API} />} />
             <Route path="/statistics" element={<Statistics token={token} api={API} />} />
+            <Route path="/statistics/passenger-experience" element={<PassengerExperience token={token} api={API} />} />
+            <Route path="/statistics/carbon" element={<CarbonDashboard token={token} api={API} />} />
+            <Route path="/ai/gate-conflicts" element={<GateConflicts token={token} api={API} />} />
+            <Route path="/ai/connections" element={<ConnectionAnalysis token={token} api={API} />} />
+            <Route path="/ai/weather-routing" element={<WeatherRouting token={token} api={API} />} />
+            <Route path="/ai/crew-training" element={<CrewCrossTraining token={token} api={API} />} />
+            <Route path="/ai/cost-optimization" element={<CostOptimization token={token} api={API} />} />
+            <Route path="/ai/incident-prediction" element={<IncidentPrediction token={token} api={API} />} />
+            <Route path="/ai/baggage-recon" element={<BaggageReconciliation token={token} api={API} />} />
+            <Route path="/ai/sustainability" element={<Sustainability token={token} api={API} />} />
+            <Route path="/ai/shift-handover" element={<ShiftHandover token={token} api={API} />} />
+            <Route path="/ai/predictive-maintenance" element={<PredictiveMaintenance token={token} api={API} />} />
+            <Route path="/ai/notam-briefing" element={<NotamBriefing token={token} api={API} />} />
+            <Route path="/ai/runway-simulator" element={<RunwaySimulator token={token} api={API} />} />
+            <Route path="/ai/history" element={<AIHistory token={token} api={API} />} />
+            <Route path="/ai/traffic-forecast" element={<TrafficForecast token={token} api={API} />} />
+            <Route path="/ai/emergency-response" element={<EmergencyResponse token={token} api={API} />} />
+            <Route path="/ai/backlog-tools" element={<AIBacklogTools token={token} api={API} />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </main>

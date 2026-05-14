@@ -1,12 +1,40 @@
 const express = require('express');
 const router = express.Router();
+const { body } = require('express-validator');
 const pool = require('../db');
 const { authenticateToken } = require('../middleware/auth');
+const { generalLimiter } = require('../middleware/rateLimiter');
+const { validate } = require('../middleware/validate');
+
+router.use(generalLimiter);
+
+const delayValidation = [
+  body('flight_number').trim().notEmpty().withMessage('flight_number is required'),
+  body('airline').trim().notEmpty().withMessage('airline is required'),
+  body('origin').trim().notEmpty().isLength({ min: 2, max: 10 }).withMessage('origin IATA code is required'),
+  body('destination').trim().notEmpty().isLength({ min: 2, max: 10 }).withMessage('destination IATA code is required'),
+  body('scheduled_departure').isISO8601().withMessage('scheduled_departure must be a valid datetime'),
+  body('predicted_delay_min').isInt({ min: 0 }).withMessage('predicted_delay_min must be a non-negative integer'),
+  body('confidence_score').optional().isFloat({ min: 0, max: 1 }).withMessage('confidence_score must be between 0 and 1'),
+  body('affected_passengers').optional().isInt({ min: 0 }).withMessage('affected_passengers must be non-negative'),
+];
 
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM delay_predictions ORDER BY predicted_delay_min DESC');
-    res.json(result.rows);
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const offset = (page - 1) * limit;
+
+    const [countResult, dataResult] = await Promise.all([
+      pool.query('SELECT COUNT(*) FROM delay_predictions'),
+      pool.query('SELECT * FROM delay_predictions ORDER BY predicted_delay_min DESC LIMIT $1 OFFSET $2', [limit, offset]),
+    ]);
+
+    const total = parseInt(countResult.rows[0].count);
+    res.json({
+      data: dataResult.rows,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -22,7 +50,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
   }
 });
 
-router.post('/', authenticateToken, async (req, res) => {
+router.post('/', authenticateToken, delayValidation, validate, async (req, res) => {
   try {
     const { flight_number, airline, origin, destination, scheduled_departure, predicted_delay_min, delay_reason, confidence_score, rebooking_suggested, affected_passengers } = req.body;
     const result = await pool.query(
@@ -36,7 +64,7 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
-router.put('/:id', authenticateToken, async (req, res) => {
+router.put('/:id', authenticateToken, delayValidation, validate, async (req, res) => {
   try {
     const { flight_number, airline, origin, destination, scheduled_departure, predicted_delay_min, delay_reason, confidence_score, rebooking_suggested, affected_passengers } = req.body;
     const result = await pool.query(

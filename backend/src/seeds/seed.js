@@ -15,8 +15,9 @@ async function seed() {
   try {
     await client.query('BEGIN');
 
-    // Drop existing tables
+    // Drop existing tables (ai_analyses first due to FK on users)
     await client.query(`
+      DROP TABLE IF EXISTS ai_analyses CASCADE;
       DROP TABLE IF EXISTS maintenance_logs CASCADE;
       DROP TABLE IF EXISTS incident_reports CASCADE;
       DROP TABLE IF EXISTS weather_reports CASCADE;
@@ -214,6 +215,24 @@ async function seed() {
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       )
+    `);
+
+    // Create ai_analyses table
+    await client.query(`
+      CREATE TABLE ai_analyses (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        analysis_type VARCHAR(100) NOT NULL,
+        input_data JSONB,
+        result JSONB,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_ai_analyses_user_id ON ai_analyses(user_id);
+      CREATE INDEX IF NOT EXISTS idx_ai_analyses_created_at ON ai_analyses(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_ai_analyses_type ON ai_analyses(analysis_type);
     `);
 
     // Seed gate_assignments (15 items)
