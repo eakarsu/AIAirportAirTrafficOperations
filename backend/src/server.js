@@ -73,3 +73,17 @@ app.use('/api/gap-real-time-ramp-control-tarmac', require('./routes/gap_real_tim
 app.use('/api/gap-outbound-webhooks-airline-catering-systems', require('./routes/gap_outbound_webhooks_airline_catering_systems'));
 app.use('/api/gap-passenger-flow-iot-sensor-integration', require('./routes/gap_passenger_flow_iot_sensor_integration'));
 app.use('/api/gap-customer-facing-flight-status-portal', require('./routes/gap_customer_facing_flight_status_portal'));
+
+// ATC Custom Views (4 endpoints)
+app.use('/api/custom-views', require('./routes/customViews'));
+
+// Serve frontend build (SPA fallback) when available
+const path = require('path');
+const fs = require('fs');
+const buildDir = path.join(__dirname, '../../frontend/build');
+if (fs.existsSync(buildDir)) {
+  app.use(express.static(buildDir));
+  app.get(/^\/(?!api\/).*/, (req, res) => {
+    res.sendFile(path.join(buildDir, 'index.html'));
+  });
+}

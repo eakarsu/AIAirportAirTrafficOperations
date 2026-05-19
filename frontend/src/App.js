@@ -30,6 +30,7 @@ import CarbonDashboard from './pages/CarbonDashboard';
 import TrafficForecast from './pages/TrafficForecast';
 import EmergencyResponse from './pages/EmergencyResponse';
 import AIBacklogTools from './pages/AIBacklogTools';
+import CustomViewsPage from './pages/CustomViewsPage';
 import Navbar from './components/Navbar';
 import './App.css';
 
@@ -97,6 +98,7 @@ function App() {
             <Route path="/ai/traffic-forecast" element={<TrafficForecast token={token} api={API} />} />
             <Route path="/ai/emergency-response" element={<EmergencyResponse token={token} api={API} />} />
             <Route path="/ai/backlog-tools" element={<AIBacklogTools token={token} api={API} />} />
+            <Route path="/custom-views" element={<CustomViewsPage token={token} api={API} />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </main>

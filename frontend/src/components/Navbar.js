@@ -45,6 +45,12 @@ const linkGroups = [
       { path: '/ai/history', label: 'AI History', icon: 'fa-history' },
     ],
   },
+  {
+    label: 'ATC Views',
+    links: [
+      { path: '/custom-views', label: 'Custom Views', icon: 'fa-tower-control' },
+    ],
+  },
 ];
 
 function Navbar({ user, onLogout }) {
