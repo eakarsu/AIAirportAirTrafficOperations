@@ -34,6 +34,11 @@ import CustomViewsPage from './pages/CustomViewsPage';
 import Navbar from './components/Navbar';
 import './App.css';
 
+import CodexCustomVizFeature from './pages/CodexCustomVizFeature';
+import CodexOperationsFeature from './pages/CodexOperationsFeature';
+
+import TimelineView from './pages/TimelineView';
+
 const API = process.env.REACT_APP_API_URL || 'http://localhost:4000';
 
 function App() {
@@ -69,6 +74,10 @@ function App() {
         <Navbar user={user} onLogout={logout} />
         <main className="main-content">
           <Routes>
+        <Route path="/insights/timeline" element={<TimelineView />} />
+        <Route path="/codex/custom-viz" element={<CodexCustomVizFeature />} />
+        <Route path="/codex/operations" element={<CodexOperationsFeature />} />
+
             <Route path="/" element={<Dashboard token={token} api={API} />} />
             <Route path="/gates" element={<GateAssignment token={token} api={API} />} />
             <Route path="/crews" element={<GroundCrew token={token} api={API} />} />
