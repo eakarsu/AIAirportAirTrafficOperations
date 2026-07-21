@@ -26,11 +26,6 @@ function Login({ onLogin, api }) {
     }
   };
 
-  const autofill = () => {
-    setEmail('admin@airport.com');
-    setPassword('admin123');
-  };
-
   return (
     <div className="login-page">
       <div className="login-container">
@@ -65,9 +60,6 @@ function Login({ onLogin, api }) {
             {loading ? <><i className="fas fa-spinner fa-spin"></i> Signing in...</> : <><i className="fas fa-sign-in-alt"></i> Sign In</>}
           </button>
         </form>
-        <button className="btn-autofill" onClick={autofill}>
-          <i className="fas fa-magic"></i> Auto-fill Demo Credentials
-        </button>
       </div>
     </div>
   );

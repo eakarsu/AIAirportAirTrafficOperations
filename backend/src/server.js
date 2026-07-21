@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) throw new Error('JWT_SECRET must be at least 32 characters');
+if (!process.env.DATABASE_URL && !process.env.DB_PASSWORD) throw new Error('DATABASE_URL or DB_PASSWORD must be configured');
 
 const app = express();
 const PORT = process.env.BACKEND_PORT || 4000;
@@ -35,6 +37,7 @@ app.use('/api/incidents', require('./routes/incidents'));
 app.use('/api/maintenance', require('./routes/maintenance'));
 app.use('/api/stats', require('./routes/stats'));
 app.use('/api/ai', require('./routes/ai'));
+app.use('/api/operational-plans', require('./routes/operationsWorkflow'));
 
 // Map new AI feature routes into the server for clarity
 // All new AI endpoints are in routes/ai.js under /api/ai/*
@@ -42,40 +45,6 @@ app.use('/api/ai', require('./routes/ai'));
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
-
-const { initDb } = require('./db');
-
-initDb()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`✈️  Airport Operations Backend running on port ${PORT}`);
-    });
-  })
-  .catch((err) => {
-    console.error('Failed to initialize database:', err);
-    process.exit(1);
-  });
-
-// BATCH_00_AUDIT_MOUNTS
-app.use('/api/adsb-feed', require('./routes/adsbFeed'));
-app.use('/api/noise-impact', require('./routes/noiseImpact'));
-app.use('/api/emergency-sim', require('./routes/emergencySim'));
-app.use('/api/passenger-experience', require('./routes/passengerExperience'));
-app.use('/api/faa-iata-bridge', require('./routes/faaIataBridge'));
-
-// === Batch 00 Gaps & Frontend Mounts ===
-app.use('/api/gap-ai-passenger-experience-optimization-crowd', require('./routes/gap_ai_passenger_experience_optimization_crowd'));
-app.use('/api/gap-ai-revenue-management-dynamic-gate', require('./routes/gap_ai_revenue_management_dynamic_gate'));
-app.use('/api/gap-ai-ramp-vehicle-routing-optimization', require('./routes/gap_ai_ramp_vehicle_routing_optimization'));
-app.use('/api/gap-ai-weather-rerouting-beyond-basic', require('./routes/gap_ai_weather_rerouting_beyond_basic'));
-app.use('/api/gap-emergency-response-coordination-module-fire', require('./routes/gap_emergency_response_coordination_module_fire'));
-app.use('/api/gap-real-time-ramp-control-tarmac', require('./routes/gap_real_time_ramp_control_tarmac'));
-app.use('/api/gap-outbound-webhooks-airline-catering-systems', require('./routes/gap_outbound_webhooks_airline_catering_systems'));
-app.use('/api/gap-passenger-flow-iot-sensor-integration', require('./routes/gap_passenger_flow_iot_sensor_integration'));
-app.use('/api/gap-customer-facing-flight-status-portal', require('./routes/gap_customer_facing_flight_status_portal'));
-
-// ATC Custom Views (4 endpoints)
-app.use('/api/custom-views', require('./routes/customViews'));
 
 // Serve frontend build (SPA fallback) when available
 const path = require('path');
@@ -87,3 +56,18 @@ if (fs.existsSync(buildDir)) {
     res.sendFile(path.join(buildDir, 'index.html'));
   });
 }
+
+app.use((req, res) => {
+  res.status(404).json({ error: 'Route not found' });
+});
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  const status = err.status || 500;
+  res.status(status).json({ error: status >= 500 ? 'Internal server error' : err.message });
+});
+
+app.listen(PORT, () => {
+  console.log(`Airport Operations Backend running on port ${PORT}`);
+});
+
+module.exports = app;
