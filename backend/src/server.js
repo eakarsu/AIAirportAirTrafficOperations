@@ -26,6 +26,7 @@ app.use(express.json({ limit: '5mb' }));
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/runtime-ai', require('./routes/runtimeAi'));
 app.use('/api/gates', require('./routes/gates'));
 app.use('/api/crews', require('./routes/crews'));
 app.use('/api/delays', require('./routes/delays'));

@@ -17,13 +17,21 @@ if [[ ! -d backend/node_modules || ! -d frontend/node_modules ]]; then
   exit 1
 fi
 
-(cd backend && PORT="$BACKEND_PORT" npm start) &
+for port in "$BACKEND_PORT" "$FRONTEND_PORT"; do
+  if lsof -tiTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "Port $port is occupied; refusing to terminate another process." >&2
+    exit 1
+  fi
+done
+
+(cd backend && PORT="$BACKEND_PORT" CLIENT_URL="http://127.0.0.1:$FRONTEND_PORT" npm start) &
 backend_pid=$!
-(cd frontend && PORT="$FRONTEND_PORT" BROWSER=none npm start) &
+(cd frontend && PORT="$FRONTEND_PORT" BROWSER=none REACT_APP_API_URL="http://127.0.0.1:$BACKEND_PORT" npm start) &
 frontend_pid=$!
 
 cleanup() {
   kill "$backend_pid" "$frontend_pid" 2>/dev/null || true
+  wait "$backend_pid" "$frontend_pid" 2>/dev/null || true
 }
 trap cleanup INT TERM EXIT
 while kill -0 "$backend_pid" 2>/dev/null && kill -0 "$frontend_pid" 2>/dev/null; do

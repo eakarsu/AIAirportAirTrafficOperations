@@ -20,7 +20,6 @@ function Dashboard({ token, api }) {
     loadStats();
     const interval = setInterval(loadStats, 30000);
     return () => clearInterval(interval);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, api]);
 
   useEffect(() => {
