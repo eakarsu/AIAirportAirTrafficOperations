@@ -10,6 +10,12 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD || 'postgres',
 });
 
+function requireDemoPassword() {
+  const password = process.env.DEMO_PASSWORD || process.env.SEED_DEMO_PASSWORD || process.env.DEMO_SEED_PASSWORD || '';
+  if (password.length < 12 || password.length > 1024) throw new Error('DEMO_PASSWORD must contain 12-1024 characters');
+  return password;
+}
+
 async function seed() {
   const client = await pool.connect();
   try {
@@ -133,7 +139,7 @@ async function seed() {
     `);
 
     // Seed users
-    const passwordHash = await bcrypt.hash('admin123', 10);
+    const passwordHash = await bcrypt.hash(requireDemoPassword(), 10);
     await client.query(`
       INSERT INTO users (name, email, password_hash, role) VALUES
       ('Admin User', 'admin@airport.com', $1, 'admin'),
