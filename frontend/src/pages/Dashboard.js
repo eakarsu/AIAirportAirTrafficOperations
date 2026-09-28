@@ -11,7 +11,11 @@ function Dashboard({ token, api }) {
 
   const loadStats = () => {
     fetch(`${api}/api/stats`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.json())
+      .then(async r => {
+        const data = await r.json();
+        if (!r.ok || !data?.overview) throw new Error(data?.error || 'Statistics are unavailable');
+        return data;
+      })
       .then(data => { setStats(data); setLoading(false); setCountdown(30); })
       .catch(err => { setError(err.message); setLoading(false); });
   };
@@ -87,7 +91,7 @@ function Dashboard({ token, api }) {
         </div>
       )}
 
-      {stats && (
+      {stats?.overview && (
         <div className="dashboard-stats">
           <div className="stat-card">
             <div className="stat-value">{stats.overview.total_flights}</div>
