@@ -32,7 +32,6 @@ import EmergencyResponse from './pages/EmergencyResponse';
 import AIBacklogTools from './pages/AIBacklogTools';
 import CustomViewsPage from './pages/CustomViewsPage';
 import Navbar from './components/Navbar';
-import Sidebar from './components/Sidebar';
 import './App.css';
 
 import CodexCustomVizFeature from './pages/CodexCustomVizFeature';
@@ -71,8 +70,8 @@ function App() {
 
   return (
     <Router>
-      <div className="app-shell">
-        <Sidebar user={user} onLogout={handleLogout} />
+      <div className="app">
+        <Navbar user={user} onLogout={logout} />
         <main className="main-content">
           <Routes>
         <Route path="/insights/timeline" element={<TimelineView />} />
