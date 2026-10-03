@@ -32,6 +32,7 @@ import EmergencyResponse from './pages/EmergencyResponse';
 import AIBacklogTools from './pages/AIBacklogTools';
 import CustomViewsPage from './pages/CustomViewsPage';
 import Navbar from './components/Navbar';
+import AppSidebar from './components/AppSidebar';
 import './App.css';
 
 import CodexCustomVizFeature from './pages/CodexCustomVizFeature';
@@ -70,7 +71,8 @@ function App() {
 
   return (
     <Router>
-      <div className="app">
+      <div className="app codex-nav-shell">
+        <AppSidebar />
         <Navbar user={user} onLogout={logout} />
         <main className="main-content">
           <Routes>
