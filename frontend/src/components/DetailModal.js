@@ -1,42 +1,7 @@
 import React from 'react';
-
-function DetailModal({ title, item, fields, onClose, onEdit, onDelete }) {
-  if (!item) return null;
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2>{title}</h2>
-          <button className="modal-close" onClick={onClose}>
-            <i className="fas fa-times"></i>
-          </button>
-        </div>
-        <div className="modal-body">
-          <div className="detail-grid">
-            {fields.map(field => (
-              <div key={field.key} className="detail-item">
-                <label>{field.label}</label>
-                <span>
-                  {field.render
-                    ? field.render(item[field.key], item)
-                    : (item[field.key] != null ? String(item[field.key]) : 'N/A')}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="modal-actions">
-          <button className="btn-edit" onClick={() => onEdit(item)}>
-            <i className="fas fa-edit"></i> Edit
-          </button>
-          <button className="btn-delete" onClick={() => onDelete(item.id)}>
-            <i className="fas fa-trash"></i> Delete
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+import Modal from './AIWorkspaceModal';
+import './AIWorkspace.css';
+export default function DetailModal({title,item,fields,onClose,onEdit,onDelete}){
+ if(!item)return null;const draft=item.record_kind==='planning_draft';
+ return <Modal title={title} onClose={onClose} footer={<><button type="button" className="btn-edit" disabled={!draft} onClick={()=>onEdit(item)}>Edit</button><button type="button" className="btn-delete" disabled={!draft} onClick={()=>onDelete(item.id)}>Delete</button><button type="button" className="btn-cancel" onClick={onClose}>Cancel</button></>}><p>{draft?'Planning draft: every value is a proposal or training assumption. No operational evidence, execution, authorization, custody, observation, prediction or completed maintenance is established.':'Retained source record: changes require its actual authorized operational workflow.'}</p><div className="detail-grid">{fields.map(field=><div key={field.key} className="detail-item"><label>{field.label}</label><span>{item[field.key]===null||item[field.key]===undefined?'Not provided':field.render?field.render(item[field.key],item):String(item[field.key])}</span></div>)}</div></Modal>;
 }
-
-export default DetailModal;

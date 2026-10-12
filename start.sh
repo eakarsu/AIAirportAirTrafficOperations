@@ -91,16 +91,18 @@ if [[ ! -d backend/node_modules || ! -d frontend/node_modules ]]; then
   echo "Dependencies are missing; run ./scripts/bootstrap.sh explicitly." >&2
   exit 1
 fi
-if [ "${NODE_ENV:-development}" != production ] && [ "${ENABLE_DEMO_CREDENTIAL_AUTOFILL:-true}" = true ]; then
-  ALLOW_SCHEMA_MIGRATION=1 node backend/scripts/create-admin.js
-fi
-
 for port in "$BACKEND_PORT" "$FRONTEND_PORT"; do
   if lsof -tiTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
     echo "Port $port is occupied; refusing to terminate another process." >&2
     exit 1
   fi
 done
+
+echo "Preparing additive PostgreSQL schema; existing records preserved…"
+node backend/scripts/migrate.js
+if [ "${NODE_ENV:-development}" != production ] && [ "${ENABLE_DEMO_CREDENTIAL_AUTOFILL:-true}" = true ]; then
+  ALLOW_SCHEMA_MIGRATION=1 node backend/scripts/create-admin.js
+fi
 
 (cd backend && PORT="$BACKEND_PORT" CLIENT_URL="http://127.0.0.1:$FRONTEND_PORT" npm start) &
 backend_pid=$!

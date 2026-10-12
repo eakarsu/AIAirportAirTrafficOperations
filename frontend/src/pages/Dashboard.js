@@ -1,37 +1,11 @@
+import useOwnedAirportStats from '../components/useOwnedAirportStats';
+import OwnedAirportCounts from '../components/OwnedAirportCounts';
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 function Dashboard({ token, api }) {
   const navigate = useNavigate();
-  const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [countdown, setCountdown] = useState(30);
-  const countdownRef = useRef(null);
-
-  const loadStats = () => {
-    fetch(`${api}/api/stats`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(async r => {
-        const data = await r.json();
-        if (!r.ok || !data?.overview) throw new Error(data?.error || 'Statistics are unavailable');
-        return data;
-      })
-      .then(data => { setStats(data); setLoading(false); setCountdown(30); })
-      .catch(err => { setError(err.message); setLoading(false); });
-  };
-
-  useEffect(() => {
-    loadStats();
-    const interval = setInterval(loadStats, 30000);
-    return () => clearInterval(interval);
-  }, [token, api]);
-
-  useEffect(() => {
-    countdownRef.current = setInterval(() => {
-      setCountdown(c => c <= 1 ? 30 : c - 1);
-    }, 1000);
-    return () => clearInterval(countdownRef.current);
-  }, []);
+  const {stats,error,loading,load:loadStats}=useOwnedAirportStats({token,api});
 
   const features = [
     { title: 'Gate Assignment Optimization', description: 'AI-powered gate assignment optimization considering terminal proximity, aircraft size, connection times, and passenger flow.', icon: 'fa-door-open', color: '#38bdf8', path: '/gates', statKey: 'total_gates', statLabel: 'Active Assignments' },
@@ -57,8 +31,8 @@ function Dashboard({ token, api }) {
   ];
 
   const getStatValue = (statKey) => {
-    if (!stats || !statKey) return '--';
-    return stats.overview?.[statKey] ?? '--';
+    if (!stats || !statKey) return 'Source review';
+    return stats.operational_sources_available?stats.overview?.[statKey]??'Not available':'Actual source required';
   };
 
   if (loading) {
@@ -74,65 +48,24 @@ function Dashboard({ token, api }) {
     <div>
       <div className="dashboard-header">
         <h1><i className="fas fa-plane-departure" style={{ color: '#38bdf8' }}></i> Airport Operations Center</h1>
-        <p>AI-Powered Air Traffic & Ground Operations Management System</p>
+        <p>Airport planning and authorized-source review workspace</p>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 8 }}>
           <button className="btn-primary" onClick={loadStats} style={{ fontSize: 12, padding: '6px 14px' }}>
             <i className="fas fa-sync-alt"></i> Refresh Now
           </button>
-          <span style={{ fontSize: 12, color: '#64748b' }}>
-            <i className="fas fa-clock"></i> Auto-refresh in {countdown}s
-          </span>
+          
         </div>
       </div>
 
       {error && (
-        <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>
-          <i className="fas fa-exclamation-triangle"></i> Failed to load stats: {error}
+        <div role="alert" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>
+          <i className="fas fa-exclamation-triangle"></i> Failed to load stats: {error} <button type="button" onClick={loadStats}>Retry statistics</button>
         </div>
       )}
 
-      {stats?.overview && (
-        <div className="dashboard-stats">
-          <div className="stat-card">
-            <div className="stat-value">{stats.overview.total_flights}</div>
-            <div className="stat-label">Flights</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{stats.overview.total_passengers?.toLocaleString()}</div>
-            <div className="stat-label">Passengers</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{stats.overview.total_gates}</div>
-            <div className="stat-label">Gate Assignments</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{stats.overview.total_crews}</div>
-            <div className="stat-label">Ground Crews</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{stats.overview.total_baggage}</div>
-            <div className="stat-label">Bags Tracked</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{stats.overview.total_runway_ops}</div>
-            <div className="stat-label">Runway Ops</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{stats.delays?.avg_delay_min ?? 0}<span style={{ fontSize: '1rem' }}> min</span></div>
-            <div className="stat-label">Avg Delay</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value" style={{ color: stats.overview.open_incidents > 0 ? '#ef4444' : '#22c55e' }}>{stats.overview.open_incidents}</div>
-            <div className="stat-label">Open Incidents</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{stats.overview.total_maintenance}</div>
-            <div className="stat-label">Work Orders</div>
-          </div>
-        </div>
-      )}
+      {stats&&!error&&<OwnedAirportCounts stats={stats}/>}
 
-      {stats?.current_weather && (
+      {!error&&stats?.current_weather && (
         <div className="stat-card" style={{ marginBottom: '24px', padding: '20px' }}>
           <h3 style={{ margin: '0 0 12px 0', color: '#e2e8f0' }}>
             <i className="fas fa-cloud-sun" style={{ color: '#38bdf8', marginRight: '8px' }}></i>

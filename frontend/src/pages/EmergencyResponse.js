@@ -1,3 +1,5 @@
+import AIReport from '../components/AIReport';
+import useNativeAIRequest from '../components/useNativeAIRequest';
 import React, { useState } from 'react';
 
 const INCIDENT_TYPES = [
@@ -14,14 +16,18 @@ function EmergencyResponse({ token, api }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const aiRequest = useNativeAIRequest(() => setLoading(false));
+
   const run = async () => {
+    const aiOwner = aiRequest.begin(); if (!aiOwner) return;
+    try {
     if (!form.incident_type || !form.location) {
       setError('Incident type and location are required.');
       return;
     }
     setLoading(true); setError(''); setData(null);
     try {
-      const res = await fetch(`${api}/api/ai/emergency-response`, {
+      const res = await aiRequest.fetch(aiOwner,`${api}/api/ai/emergency-response`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
@@ -29,8 +35,10 @@ function EmergencyResponse({ token, api }) {
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || 'Analysis failed');
       setData(result);
-    } catch (err) { setError(err.message); }
-    setLoading(false);
+    } catch (err) {
+      if (!aiRequest.isCurrent(aiOwner)) return; setError(err.message); }
+    if (aiRequest.isCurrent(aiOwner)) setLoading(false);
+    } finally { if (aiRequest.isCurrent(aiOwner)) { setLoading(false); aiRequest.finish(aiOwner); } }
   };
 
   const threatColor = (t) => {
@@ -40,6 +48,8 @@ function EmergencyResponse({ token, api }) {
 
   return (
     <div>
+      <div className="ai-example-actions">{['Quick review','Planning scenario','Detailed review'].map((label,index)=><button type="button" className="btn-cancel" disabled={loading} key={label} onClick={()=>{setForm({incident_type:['Aircraft Fire','Medical Emergency','Other'][index],severity:['low','medium','high'][index],location:'Fictional training area '+(index+1),description:'Fictional preparedness exercise '+(index+1)+'. Describe source verification, human review and review-only contingency planning. No actual incident, contact frequency, dispatch or response completion is asserted.'});setData(null);setError('');}}>{label}</button>)}</div><p>Examples fill all editable scenario fields, including optional fields. Review assumptions before requesting AI; actual sources and permissions remain separate.</p>
+      {aiRequest.notice && <p role="status">{aiRequest.notice}</p>}<button type="button" className="btn-cancel" onClick={aiRequest.cancel}>Cancel AI request</button>
       <div className="page-header">
         <h1><i className="fas fa-ambulance"></i> Emergency Response Coordinator</h1>
       </div>
@@ -96,13 +106,13 @@ function EmergencyResponse({ token, api }) {
         </div>
         <div style={{ marginTop: 16 }}>
           <button className="btn-ai" onClick={run} disabled={loading} style={{ background: '#ef4444' }}>
-            <i className="fas fa-robot"></i> {loading ? 'Generating Response Plan...' : 'Generate Emergency Response Plan'}
+            <i className="fas fa-robot"></i> {loading ? 'Generating Response Plan...' : 'Generate with OpenRouter'}
           </button>
         </div>
       </div>
 
       {error && (
-        <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>
+        <div role="alert" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>
           <i className="fas fa-exclamation-triangle"></i> {error}
         </div>
       )}
@@ -230,8 +240,8 @@ function EmergencyResponse({ token, api }) {
             </div>
           )}
 
-          {data.raw_response && (
-            <pre style={{ background: '#0f172a', padding: 12, borderRadius: 8, color: '#cbd5e1', overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 13 }}>{data.raw_response}</pre>
+          {data && (
+            <AIReport response={data} title="Advisory planning report" />
           )}
         </div>
       )}

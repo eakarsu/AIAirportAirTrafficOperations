@@ -1,3 +1,5 @@
+import AIReport from '../components/AIReport';
+import useNativeAIRequest from '../components/useNativeAIRequest';
 import React, { useState } from 'react';
 
 function IncidentPrediction({ token, api }) {
@@ -6,10 +8,14 @@ function IncidentPrediction({ token, api }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const aiRequest = useNativeAIRequest(() => setLoading(false));
+
   const run = async () => {
+    const aiOwner = aiRequest.begin(); if (!aiOwner) return;
+    try {
     setLoading(true); setError(''); setData(null);
     try {
-      const res = await fetch(`${api}/api/ai/incident-prediction`, {
+      const res = await aiRequest.fetch(aiOwner,`${api}/api/ai/incident-prediction`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ hours_ahead: Number(hoursAhead) }),
@@ -17,8 +23,10 @@ function IncidentPrediction({ token, api }) {
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || 'Analysis failed');
       setData(result);
-    } catch (err) { setError(err.message); }
-    setLoading(false);
+    } catch (err) {
+      if (!aiRequest.isCurrent(aiOwner)) return; setError(err.message); }
+    if (aiRequest.isCurrent(aiOwner)) setLoading(false);
+    } finally { if (aiRequest.isCurrent(aiOwner)) { setLoading(false); aiRequest.finish(aiOwner); } }
   };
 
   const riskColor = (l) => {
@@ -31,6 +39,8 @@ function IncidentPrediction({ token, api }) {
 
   return (
     <div>
+      <div className="ai-example-actions">{['Quick review','Planning scenario','Detailed review'].map((label,index)=><button type="button" className="btn-cancel" disabled={loading} key={label} onClick={()=>{setHoursAhead([8,24,72][index]);setData(null);setError('');}}>{label}</button>)}</div><p>Examples fill all editable scenario fields, including optional fields. Review assumptions before requesting AI; actual sources and permissions remain separate.</p>
+      {aiRequest.notice && <p role="status">{aiRequest.notice}</p>}<button type="button" className="btn-cancel" onClick={aiRequest.cancel}>Cancel AI request</button>
       <div className="page-header">
         <h1><i className="fas fa-shield-alt"></i> AI Incident Prediction</h1>
       </div>
@@ -46,11 +56,11 @@ function IncidentPrediction({ token, api }) {
           style={{ background: '#1e293b', border: '1px solid #334155', color: '#fff', padding: 8, borderRadius: 6, width: 100 }}
         />
         <button className="btn-ai" onClick={run} disabled={loading}>
-          <i className="fas fa-robot"></i> {loading ? 'Predicting...' : 'Predict Incidents'}
+          <i className="fas fa-robot"></i> {loading ? 'Predicting...' : 'Generate with OpenRouter'}
         </button>
       </div>
 
-      {error && <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>{error}</div>}
+      {error && <div role="alert" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>{error}</div>}
       {loading && <div className="ai-loading"><div className="spinner"></div><span>Predicting incidents...</span></div>}
 
       {data && !loading && (
@@ -90,8 +100,8 @@ function IncidentPrediction({ token, api }) {
             </div>
           )}
 
-          {data.raw_response && (
-            <pre style={{ background: '#0f172a', padding: 12, borderRadius: 8, color: '#cbd5e1', overflow: 'auto', whiteSpace: 'pre-wrap' }}>{data.raw_response}</pre>
+          {data && (
+            <AIReport response={data} title="Advisory planning report" />
           )}
         </div>
       )}

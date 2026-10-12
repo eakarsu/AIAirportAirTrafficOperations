@@ -1,10 +1,16 @@
 const express = require('express');
 const router = express.Router();
-const pool = require('../db');
+const nativePool=require('../db'),{AsyncLocalStorage}=require('node:async_hooks'),context=new AsyncLocalStorage(),specs=require('../config/ownedPlanningFields.json');
+const pool={query(sql,params=[]){const id=context.getStore()?.id;if(!id)throw new Error('Actual statistics account required.');let scoped=sql,args=[...params];for(const {table}of Object.values(specs))if(new RegExp('\\bFROM '+table+'\\b','i').test(scoped)){const tenant=args.push('user:'+id),actor=args.push(id);scoped=scoped.replace(new RegExp('\\bFROM '+table+'\\b','ig'),`FROM (SELECT * FROM ${table} WHERE tenant_id=$${tenant} AND created_by=$${actor} AND record_kind='actual_source') ${table}`);}return nativePool.query(scoped,args);}};
 const { authenticateToken } = require('../middleware/auth');
 const { generalLimiter } = require('../middleware/rateLimiter');
 
 router.use(generalLimiter);
+router.use(authenticateToken,async(req,res,next)=>{try{const actor=(await nativePool.query('SELECT id,role FROM users WHERE id=$1',[req.user.id])).rows[0];if(!actor||actor.role!==req.user.role)return res.status(403).json({error:'Your account access changed. Sign in again.'});
+const required=req.path==='/passenger-experience'?['delay_predictions','baggage_tracking','incident_reports']:req.path==='/carbon'?['flight_schedule']:req.path==='/crew-performance'?['ground_crews']:[];
+for(const table of required)if(!(await nativePool.query('SELECT id FROM '+table+" WHERE tenant_id=$1 AND created_by=$2 AND record_kind='actual_source' LIMIT 1",['user:'+actor.id,actor.id])).rowCount)return res.status(422).json({error:'Actual authorized '+table.replaceAll('_',' ')+' sources are required. Planning drafts cannot establish this metric.'});
+context.run(actor,next);}catch{res.status(500).json({error:'Could not verify owned statistics sources.'});}});
+
 
 // GET /api/stats - Comprehensive airport statistics
 router.get('/', authenticateToken, async (req, res) => {
@@ -32,11 +38,11 @@ router.get('/', authenticateToken, async (req, res) => {
 
     // Delay statistics
     const delayData = delays.rows;
-    const totalDelayMin = delayData.reduce((sum, d) => sum + (d.predicted_delay_min || 0), 0);
-    const avgDelay = delayData.length ? Math.round(totalDelayMin / delayData.length) : 0;
+    const totalDelayMin = delayData.reduce((sum, d) => sum + Number(d.predicted_delay_min || 0), 0);
+    const avgDelay = delayData.length ? Math.round(totalDelayMin / delayData.length) : null;
     const delayedFlights = delayData.filter(d => d.predicted_delay_min > 0).length;
     const rebookingSuggested = delayData.filter(d => d.rebooking_suggested).length;
-    const totalAffectedPassengers = delayData.reduce((sum, d) => sum + (d.affected_passengers || 0), 0);
+    const totalAffectedPassengers = delayData.reduce((sum, d) => sum + Number(d.affected_passengers || 0), 0);
 
     // Baggage statistics
     const baggageData = baggage.rows;
@@ -56,7 +62,7 @@ router.get('/', authenticateToken, async (req, res) => {
       crewsByStatus[c.status] = (crewsByStatus[c.status] || 0) + 1;
       crewsByType[c.crew_type] = (crewsByType[c.crew_type] || 0) + 1;
     });
-    const totalCrewMembers = crewData.reduce((sum, c) => sum + (c.members_count || 0), 0);
+    const totalCrewMembers = crewData.reduce((sum, c) => sum + Number(c.members_count || 0), 0);
 
     // Runway statistics
     const runwayData = runways.rows;
@@ -77,7 +83,7 @@ router.get('/', authenticateToken, async (req, res) => {
       flightsByStatus[f.status] = (flightsByStatus[f.status] || 0) + 1;
       airlines[f.airline] = (airlines[f.airline] || 0) + 1;
     });
-    const totalPassengers = gateData.reduce((sum, g) => sum + (g.passenger_count || 0), 0);
+    const totalPassengers = gateData.reduce((sum, g) => sum + Number(g.passenger_count || 0), 0);
 
     // Maintenance statistics
     const maintData = maintenance.rows;
@@ -98,7 +104,8 @@ router.get('/', authenticateToken, async (req, res) => {
     });
     const openIncidents = incidentData.filter(i => i.status === 'open' || i.status === 'investigating').length;
 
-    res.json({
+    const recordCounts=Object.fromEntries(await Promise.all(Object.entries(specs).map(async([route,{table}])=>{const result=await nativePool.query("SELECT COUNT(*)::int AS total,COUNT(*) FILTER(WHERE record_kind='planning_draft')::int AS planning_drafts,COUNT(*) FILTER(WHERE record_kind='actual_source')::int AS source_records FROM "+table+' WHERE tenant_id=$1 AND created_by=$2',['user:'+req.user.id,req.user.id]);return[route,result.rows[0]];})));
+    res.json({record_counts:recordCounts,scope:'actor-owned-records',operational_sources_available:Object.values(recordCounts).some(row=>row.source_records>0),
       overview: {
         total_flights: flightData.length,
         total_passengers: totalPassengers,
@@ -138,7 +145,7 @@ router.get('/passenger-experience', authenticateToken, async (req, res) => {
     const delayData = delays.rows;
     const totalFlights = Math.max(delayData.length, 1);
     const delayedCount = delayData.filter(d => d.predicted_delay_min > 15).length;
-    const avgDelay = delayData.reduce((s, d) => s + (d.predicted_delay_min || 0), 0) / totalFlights;
+    const avgDelay = delayData.reduce((s, d) => s + Number(d.predicted_delay_min || 0), 0) / totalFlights;
     const delayScore = Math.max(0, 100 - (delayedCount / totalFlights) * 50 - Math.min(avgDelay / 2, 30));
 
     const baggageData = baggage.rows;
@@ -163,6 +170,8 @@ router.get('/passenger-experience', authenticateToken, async (req, res) => {
     };
 
     res.json({
+      metric_kind: 'illustrative_formula',
+      methodology: 'Local weighted heuristic applied to owned source records; this is not a validated passenger satisfaction measurement or industry benchmark.',
       overall_score: overallScore,
       grade: getGrade(overallScore),
       components: {
@@ -170,7 +179,7 @@ router.get('/passenger-experience', authenticateToken, async (req, res) => {
         baggage_handling: { score: Math.round(baggageScore), weight: '35%', detail: `${mishandledCount}/${totalBags} bags mishandled` },
         safety_record: { score: Math.round(safetyScore), weight: '25%', detail: `${criticalCount} critical, ${highCount} high severity open incidents` },
       },
-      benchmark: overallScore >= 80 ? 'Above industry average' : overallScore >= 65 ? 'At industry average' : 'Below industry average',
+      benchmark: 'No verified industry benchmark configured',
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
@@ -201,7 +210,7 @@ router.get('/carbon', authenticateToken, async (req, res) => {
     };
 
     const avgTaxiMin = 15;
-    const totalAvgDelayMin = delayData.reduce((s, d) => s + (d.predicted_delay_min || 0), 0) / Math.max(delayData.length, 1);
+    const totalAvgDelayMin = delayData.reduce((s, d) => s + Number(d.predicted_delay_min || 0), 0) / Math.max(delayData.length, 1);
 
     const airlineMap = {};
     flightData.forEach(f => {
@@ -214,7 +223,7 @@ router.get('/carbon', authenticateToken, async (req, res) => {
     const totalCo2 = Object.values(airlineMap).reduce((s, a) => s + a.co2_kg, 0);
     const delayCo2 = delayData.reduce((s, d) => {
       const rate = 1.5;
-      return s + rate * (d.predicted_delay_min || 0);
+      return s + rate * Number(d.predicted_delay_min || 0);
     }, 0);
 
     const byAirline = Object.entries(airlineMap).map(([airline, data]) => ({
@@ -225,6 +234,8 @@ router.get('/carbon', authenticateToken, async (req, res) => {
     })).sort((a, b) => b.estimated_co2_kg - a.estimated_co2_kg);
 
     res.json({
+      metric_kind: 'illustrative_estimate',
+      methodology: 'Assumes 15 minutes of taxi time and fixed aircraft factors. No measured emissions, fuel burn or validated saving percentages are provided.',
       summary: {
         total_flights: flightData.length,
         total_estimated_co2_kg: Math.round(totalCo2),
@@ -234,12 +245,7 @@ router.get('/carbon', authenticateToken, async (req, res) => {
         avg_delay_min: Math.round(totalAvgDelayMin),
       },
       by_airline: byAirline,
-      reduction_opportunities: [
-        { action: 'Implement CDM (Collaborative Decision Making)', potential_saving_pct: 8 },
-        { action: 'Optimize gate proximity for connections', potential_saving_pct: 5 },
-        { action: 'Reduce ground holds via ATIS auto-update', potential_saving_pct: 4 },
-        { action: 'Single-engine taxi procedures', potential_saving_pct: 12 },
-      ],
+      reduction_opportunities: [],
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
@@ -257,7 +263,7 @@ router.get('/crew-performance', authenticateToken, async (req, res) => {
     crewData.forEach(c => {
       if (!byType[c.crew_type]) byType[c.crew_type] = { crews: 0, members: 0, active: 0, standby: 0, off: 0 };
       byType[c.crew_type].crews++;
-      byType[c.crew_type].members += c.members_count || 0;
+      byType[c.crew_type].members += Number(c.members_count || 0);
       if (c.status === 'active') byType[c.crew_type].active++;
       else if (c.status === 'standby') byType[c.crew_type].standby++;
       else byType[c.crew_type].off++;
@@ -284,15 +290,15 @@ router.get('/crew-performance', authenticateToken, async (req, res) => {
     res.json({
       summary: {
         total_crews: crewData.length,
-        total_members: crewData.reduce((s, c) => s + (c.members_count || 0), 0),
+        total_members: crewData.reduce((s, c) => s + Number(c.members_count || 0), 0),
         active_crews: activeCount,
         standby_crews: crewData.filter(c => c.status === 'standby').length,
         utilization_rate_pct: utilizationRate,
         overdue_shift_handovers: overlapShifts.length,
       },
       by_type: typeBreakdown,
-      staffing_adequacy: utilizationRate > 80 ? 'Adequate' : utilizationRate > 60 ? 'Marginal' : 'Understaffed',
-      recommendations: utilizationRate < 70 ? ['Consider activating standby crews', 'Review shift coverage gaps'] : ['Current staffing levels adequate'],
+      staffing_adequacy: 'Not assessed: actual workload, qualifications and staffing policy are required',
+      recommendations: [],
       timestamp: new Date().toISOString(),
     });
   } catch (err) {

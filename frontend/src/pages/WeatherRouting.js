@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import AIReport from '../components/AIReport';
+import useNativeAIRequest from '../components/useNativeAIRequest';
+import React, { useState, useRef, useEffect } from 'react';
 
 function WeatherRouting({ token, api }) {
   const [conditions, setConditions] = useState({
@@ -19,14 +21,17 @@ function WeatherRouting({ token, api }) {
   const update = (field) => (e) =>
     setConditions((prev) => ({ ...prev, [field]: e.target.value }));
 
+  const sourceRequest=useRef(null);
+  useEffect(()=>()=>{sourceRequest.current?.abort();sourceRequest.current=null;},[]);
   const loadMetar = async () => {
+    sourceRequest.current?.abort();const controller=new AbortController();sourceRequest.current=controller;
     setMetarLoading(true);
     setError('');
     try {
-      const res = await fetch(`${api}/api/weather?page=1&limit=20`, { headers: { Authorization: `Bearer ${token}` } });
-      const json = await res.json();
-      const records = Array.isArray(json) ? json : (json.data || []);
-      const metar = records.find(r => r.report_type === 'METAR');
+      const res = await fetch(`${api}/api/weather?page=1&limit=20`, { headers: { Authorization: `Bearer ${token}` },signal:controller.signal });
+      const json = await res.json();if(sourceRequest.current!==controller||controller.signal.aborted)return;
+      if(!res.ok)throw new Error(json.error||'Could not load weather records.');const records=Array.isArray(json)?json:json.data;if(!Array.isArray(records))throw new Error('Weather returned an invalid list.');
+      const metar = records.find(r => r.record_kind==='actual_source'&&r.report_type==='METAR');
       if (!metar) { setError('No METAR report found in weather database.'); setMetarLoading(false); return; }
       setConditions({
         wind_speed: metar.wind_speed_knots != null ? String(metar.wind_speed_knots) : '',
@@ -34,12 +39,16 @@ function WeatherRouting({ token, api }) {
         ceiling: metar.ceiling_feet != null ? String(metar.ceiling_feet) : '',
       });
     } catch (err) {
-      setError('Failed to load METAR: ' + err.message);
+      if(sourceRequest.current===controller&&!controller.signal.aborted)setError('Failed to load METAR: ' + err.message);
     }
-    setMetarLoading(false);
+    if(sourceRequest.current===controller&&!controller.signal.aborted)setMetarLoading(false);
   };
 
+  const aiRequest = useNativeAIRequest(() => setLoading(false));
+
   const runAnalysis = async (e) => {
+    const aiOwner = aiRequest.begin(); if (!aiOwner) return;
+    try {
     e.preventDefault();
     setLoading(true);
     setError('');
@@ -49,7 +58,7 @@ function WeatherRouting({ token, api }) {
       Object.entries(conditions).forEach(([k, v]) => {
         if (v !== '') payload.conditions[k] = Number(v);
       });
-      const res = await fetch(`${api}/api/ai/weather-routing`, {
+      const res = await aiRequest.fetch(aiOwner,`${api}/api/ai/weather-routing`, {
         method: 'POST',
         headers,
         body: JSON.stringify(payload),
@@ -58,9 +67,11 @@ function WeatherRouting({ token, api }) {
       if (!res.ok) throw new Error(result.error || 'Analysis failed');
       setData(result);
     } catch (err) {
+      if (!aiRequest.isCurrent(aiOwner)) return;
       setError(err.message);
     }
-    setLoading(false);
+    if (aiRequest.isCurrent(aiOwner)) setLoading(false);
+    } finally { if (aiRequest.isCurrent(aiOwner)) { setLoading(false); aiRequest.finish(aiOwner); } }
   };
 
   const suitabilityColor = (s) => {
@@ -73,6 +84,8 @@ function WeatherRouting({ token, api }) {
 
   return (
     <div>
+      <div className="ai-example-actions">{['Quick review','Planning scenario','Detailed review'].map((label,index)=><button type="button" className="btn-cancel" disabled={loading} key={label} onClick={()=>{setConditions({wind_speed:String([8,14,22][index]),visibility:String([10,5,2][index]),ceiling:String([8000,2500,900][index])});setData(null);setError('');}}>{label}</button>)}</div><p>Examples fill all editable scenario fields, including optional fields. Review assumptions before requesting AI; actual sources and permissions remain separate.</p>
+      {aiRequest.notice && <p role="status">{aiRequest.notice}</p>}<button type="button" className="btn-cancel" onClick={aiRequest.cancel}>Cancel AI request</button>
       <div className="page-header">
         <h1><i className="fas fa-cloud-meatball"></i> Weather-Aware Route Planner</h1>
       </div>
@@ -128,14 +141,14 @@ function WeatherRouting({ token, api }) {
               />
             </div>
             <button type="submit" className="btn-ai" disabled={loading} style={{ width: '100%' }}>
-              <i className="fas fa-robot"></i> {loading ? 'Analyzing...' : 'Get Recommendations'}
+              <i className="fas fa-robot"></i> {loading ? 'Analyzing...' : 'Generate with OpenRouter'}
             </button>
           </form>
         </div>
 
         <div>
           {error && (
-            <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>
+            <div role="alert" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>
               <i className="fas fa-exclamation-triangle"></i> {error}
             </div>
           )}
@@ -206,8 +219,8 @@ function WeatherRouting({ token, api }) {
                 </div>
               )}
 
-              {data.raw_response && (
-                <pre style={{ background: '#0f172a', padding: 12, borderRadius: 8, color: '#cbd5e1', overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 13 }}>{data.raw_response}</pre>
+              {data && (
+                <AIReport response={data} title="Advisory planning report" />
               )}
             </div>
           )}

@@ -1,3 +1,6 @@
+import NativeAIContext from '../components/NativeAIContext';
+import AIReport from '../components/AIReport';
+import useNativeAIRequest from '../components/useNativeAIRequest';
 import React, { useState } from 'react';
 
 const urgencyColor = (u) => {
@@ -12,28 +15,37 @@ function PredictiveMaintenance({ token, api }) {
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
+  const [planningContext,setPlanningContext]=useState('');
+  const aiRequest = useNativeAIRequest(() => setLoading(false));
+
   const runAnalysis = async () => {
+    const aiOwner = aiRequest.begin(); if (!aiOwner) return;
+    try {
     setLoading(true);
     setError('');
     setData(null);
     try {
-      const res = await fetch(`${api}/api/ai/predictive-maintenance`, { method: 'POST', headers });
+      const res = await aiRequest.fetch(aiOwner,`${api}/api/ai/predictive-maintenance`, { method: 'POST', headers,body:JSON.stringify({planning_context:planningContext}) });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || 'Analysis failed');
       setData(result);
     } catch (err) {
+      if (!aiRequest.isCurrent(aiOwner)) return;
       setError(err.message);
     }
-    setLoading(false);
+    if (aiRequest.isCurrent(aiOwner)) setLoading(false);
+    } finally { if (aiRequest.isCurrent(aiOwner)) { setLoading(false); aiRequest.finish(aiOwner); } }
   };
 
   return (
     <div>
+      <NativeAIContext title="Predictive Maintenance" value={planningContext} onChange={setPlanningContext} disabled={loading}/>
+      {aiRequest.notice && <p role="status">{aiRequest.notice}</p>}<button type="button" className="btn-cancel" onClick={aiRequest.cancel}>Cancel AI request</button>
       <div className="page-header">
         <h1><i className="fas fa-tools"></i> AI Predictive Maintenance</h1>
         <div className="header-actions">
           <button className="btn-ai" onClick={runAnalysis} disabled={loading}>
-            <i className="fas fa-robot"></i> {loading ? 'Analyzing...' : 'Predict Failures'}
+            <i className="fas fa-robot"></i> {loading ? 'Analyzing...' : 'Generate with OpenRouter'}
           </button>
         </div>
       </div>
@@ -43,7 +55,7 @@ function PredictiveMaintenance({ token, api }) {
       </p>
 
       {error && (
-        <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>
+        <div role="alert" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>
           <i className="fas fa-exclamation-triangle"></i> {error}
         </div>
       )}
@@ -141,9 +153,9 @@ function PredictiveMaintenance({ token, api }) {
             </div>
           )}
 
-          {data.raw_response && (
+          {data && (
             <div className="ai-analysis-container">
-              <pre style={{ whiteSpace: 'pre-wrap', color: '#cbd5e1', fontSize: 12 }}>{data.raw_response}</pre>
+              <AIReport response={data} title="Advisory planning report" />
             </div>
           )}
         </div>

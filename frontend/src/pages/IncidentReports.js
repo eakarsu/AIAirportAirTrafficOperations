@@ -1,3 +1,5 @@
+import useNativeRecordMutation from '../components/useNativeRecordMutation';
+import useNativeRecordList from '../components/useNativeRecordList';
 import React, { useState, useEffect, useCallback } from 'react';
 import DetailModal from '../components/DetailModal';
 import FormModal from '../components/FormModal';
@@ -32,31 +34,17 @@ function IncidentReports({ token, api }) {
   const [editItem, setEditItem] = useState(null);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-  const fetchData = useCallback(async () => {
-    const res = await fetch(`${api}/api/incidents?page=1&limit=100`, { headers: { Authorization: `Bearer ${token}` } });
-    const data = await res.json();
-    setItems(Array.isArray(data) ? data : (data.data || []));
-  }, [api, token]);
+  const { loading: recordLoading, error: recordError, reload: fetchData } = useNativeRecordList({
+    url: `${api}/api/incidents?page=1&limit=100`, token,
+    onLoad: data => { setItems(data.items); },
+  });
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Delete this incident report?')) return;
-    await fetch(`${api}/api/incidents/${id}`, { method: 'DELETE', headers });
-    setSelected(null);
-    fetchData();
-  };
+  const recordWrite = useNativeRecordMutation({token,api,route:'incidents',reload:fetchData,onSaved:()=>{setShowForm(false);setEditItem(null);},onDeleted:()=>setSelected(null)});
 
-  const handleSave = async (data) => {
-    if (editItem) {
-      await fetch(`${api}/api/incidents/${editItem.id}`, { method: 'PUT', headers, body: JSON.stringify(data) });
-    } else {
-      await fetch(`${api}/api/incidents`, { method: 'POST', headers, body: JSON.stringify(data) });
-    }
-    setShowForm(false);
-    setEditItem(null);
-    fetchData();
-  };
+  const handleDelete = id => recordWrite.remove(id);
+  const handleSave = data => recordWrite.save(data, editItem?.id);
 
   const handleEdit = (item) => {
     setSelected(null);
@@ -83,6 +71,8 @@ function IncidentReports({ token, api }) {
 
   return (
     <div>
+      {recordWrite.error && <div role="alert" className="ai-error">{recordWrite.error}</div>}
+      <p className="planning-record-notice">Saved planning drafts are proposals. They do not establish flights, clearances, gate assignments, crew authorization, baggage custody, weather observations, predictions, incident occurrence or completed maintenance.</p>
       <div className="page-header">
         <h1><i className="fas fa-exclamation-triangle"></i> Incident Reports</h1>
         <div className="header-actions">
@@ -102,9 +92,10 @@ function IncidentReports({ token, api }) {
       </div>
 
       <div className="data-table-container">
+          {recordError && <div role="alert" className="ai-error">Could not load records: {recordError} <button type="button" className="btn-cancel" onClick={fetchData}>Retry loading records</button></div>}
         <table className="data-table">
           <thead>
-            <tr>
+            <tr><th>Record classification</th>
               <th>Type</th>
               <th>Severity</th>
               <th>Location</th>
@@ -117,6 +108,7 @@ function IncidentReports({ token, api }) {
           <tbody>
             {items.map(item => (
               <tr key={item.id} onClick={() => setSelected(item)}>
+                  <td><small>{item.record_kind === 'planning_draft' ? 'Planning draft — no operational evidence' : 'Recorded source'}</small></td>
                 <td><strong>{item.incident_type}</strong></td>
                 <td><span className={`status-badge severity-${item.severity}`}>{item.severity}</span></td>
                 <td>{item.location}</td>
@@ -135,7 +127,7 @@ function IncidentReports({ token, api }) {
           title={`Incident - ${selected.incident_type}`}
           item={selected}
           fields={detailFields}
-          onClose={() => setSelected(null)}
+          onClose={() => {recordWrite.cancel();setSelected(null);}}
           onEdit={handleEdit}
           onDelete={handleDelete}
         />
@@ -146,7 +138,7 @@ function IncidentReports({ token, api }) {
           title={editItem ? 'Edit Incident Report' : 'New Incident Report'}
           fields={formFields}
           initialData={editItem}
-          onClose={() => { setShowForm(false); setEditItem(null); }}
+          onClose={() => {recordWrite.cancel();setShowForm(false);setEditItem(null);}}
           onSave={handleSave}
         />
       )}

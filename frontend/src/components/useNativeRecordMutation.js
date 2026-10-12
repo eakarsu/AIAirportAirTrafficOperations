@@ -1,0 +1,8 @@
+import {useEffect,useRef,useState} from 'react';
+export default function useNativeRecordMutation({token,api,route,reload,onSaved,onDeleted}){
+ const active=useRef(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
+ const cancel=()=>{active.current?.abort();active.current=null;setBusy(false);};
+ useEffect(()=>()=>{active.current?.abort();active.current=null;},[]);
+ const request=async(method,id,body)=>{if(active.current)return;const controller=new AbortController();active.current=controller;setBusy(true);setError('');try{const response=await fetch(`${api}/api/${route}${id?'/'+id:''}`,{method,signal:controller.signal,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});let data;try{data=await response.json();}catch{throw new Error('The planning service returned an unreadable response.');}if(!response.ok)throw new Error(data.error||'The planning request failed.');if(method!=='DELETE'&&!data?.id)throw new Error('The planning service did not return a saved record.');if(active.current!==controller||controller.signal.aborted)return;if(method==='DELETE')onDeleted?.();else onSaved?.();await reload();return data;}catch(failure){if(active.current===controller&&!controller.signal.aborted){setError(failure.message||'Could not save the planning record.');throw failure;}}finally{if(active.current===controller){active.current=null;setBusy(false);}}};
+ return{error,busy,cancel,save:(body,id)=>request(id?'PUT':'POST',id,body),remove:async id=>{if(!window.confirm('Delete this saved planning draft?'))return;try{await request('DELETE',id);}catch{/* Native inline error remains visible. */}}};
+}

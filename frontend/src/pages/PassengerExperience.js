@@ -1,27 +1,30 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 function PassengerExperience({ token, api }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  const pending=useRef(null);
   const load = async () => {
+    pending.current?.abort();const controller=new AbortController();pending.current=controller;
     setLoading(true);
     setError('');
     try {
       const res = await fetch(`${api}/api/stats/passenger-experience`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}` },signal:controller.signal,
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || 'Failed to load');
-      setData(result);
+      if(!(Number.isFinite(result.overall_score)&&result.components))throw new Error('Statistics returned an invalid response.');
+      if(pending.current===controller&&!controller.signal.aborted)setData(result);
     } catch (err) {
-      setError(err.message);
+      if(pending.current===controller&&!controller.signal.aborted){setError(err.message);setData(null);}
     }
-    setLoading(false);
+    if(pending.current===controller&&!controller.signal.aborted)setLoading(false);
   };
 
-  useEffect(() => { load(); }, [token, api]);
+  useEffect(() => { load();return()=>{pending.current?.abort();pending.current=null;}; }, [token, api]);
 
   const gradeColor = (g) => {
     const map = { A: '#22c55e', B: '#84cc16', C: '#f59e0b', D: '#f97316', F: '#ef4444' };
@@ -46,15 +49,16 @@ function PassengerExperience({ token, api }) {
       </p>
 
       {error && (
-        <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>
-          <i className="fas fa-exclamation-triangle"></i> {error}
+        <div role="alert" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>
+          <i className="fas fa-exclamation-triangle"></i> {error} <button onClick={load}>Retry statistics</button>
         </div>
       )}
 
       {loading && <div className="ai-loading"><div className="spinner"></div><span>Loading...</span></div>}
 
-      {data && !loading && (
+      {data && !loading && !error && (
         <div>
+          {data.methodology&&<p>{data.methodology}</p>}
           <div style={{ display: 'flex', gap: 20, marginBottom: 24, flexWrap: 'wrap', alignItems: 'stretch' }}>
             <div style={{ flex: 1, minWidth: 180, padding: 32, borderRadius: 16, background: 'rgba(30,41,59,0.6)', border: `2px solid ${gradeColor(data.grade)}40`, textAlign: 'center' }}>
               <div style={{ fontSize: 12, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 8 }}>Overall Grade</div>

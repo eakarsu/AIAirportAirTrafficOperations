@@ -1,3 +1,5 @@
+import useNativeRecordMutation from '../components/useNativeRecordMutation';
+import useNativeRecordList from '../components/useNativeRecordList';
 import React, { useState, useEffect, useCallback } from 'react';
 import DetailModal from '../components/DetailModal';
 import FormModal from '../components/FormModal';
@@ -38,43 +40,20 @@ function WeatherDashboard({ token, api }) {
   const [selected, setSelected] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
-  const [loading, setLoading] = useState(false);
+
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${api}/api/weather?page=${page}&limit=20`, { headers: { Authorization: `Bearer ${token}` } });
-      const data = await res.json();
-      if (data.data) {
-        setItems(data.data);
-        setPagination(data.pagination);
-      } else {
-        setItems(Array.isArray(data) ? data : []);
-      }
-    } catch (err) { console.error(err); }
-    setLoading(false);
-  }, [api, token, page]);
+  const { loading: recordLoading, error: recordError, reload: fetchData } = useNativeRecordList({
+    url: `${api}/api/weather?page=${page}&limit=20`, token,
+    onLoad: data => { setItems(data.items); if (data.pagination) setPagination(data.pagination); },
+  });
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Delete this weather report?')) return;
-    await fetch(`${api}/api/weather/${id}`, { method: 'DELETE', headers });
-    setSelected(null);
-    fetchData();
-  };
+  const recordWrite = useNativeRecordMutation({token,api,route:'weather',reload:fetchData,onSaved:()=>{setShowForm(false);setEditItem(null);},onDeleted:()=>setSelected(null)});
 
-  const handleSave = async (data) => {
-    if (editItem) {
-      await fetch(`${api}/api/weather/${editItem.id}`, { method: 'PUT', headers, body: JSON.stringify(data) });
-    } else {
-      await fetch(`${api}/api/weather`, { method: 'POST', headers, body: JSON.stringify(data) });
-    }
-    setShowForm(false);
-    setEditItem(null);
-    fetchData();
-  };
+  const handleDelete = id => recordWrite.remove(id);
+  const handleSave = data => recordWrite.save(data, editItem?.id);
 
   const handleEdit = (item) => {
     setSelected(null);
@@ -83,11 +62,13 @@ function WeatherDashboard({ token, api }) {
   };
 
   // Use items for display but fetch all METARs from first page for the summary card
-  const latestMetar = items.find(i => i.report_type === 'METAR');
-  const notams = items.filter(i => i.report_type === 'NOTAM');
+  const latestMetar = items.find(i => i.record_kind === 'actual_source' && i.report_type === 'METAR');
+  const notams = items.filter(i => i.record_kind === 'actual_source' && i.report_type === 'NOTAM');
 
   return (
     <div>
+      {recordWrite.error && <div role="alert" className="ai-error">{recordWrite.error}</div>}
+      <p className="planning-record-notice">Saved planning drafts are proposals. They do not establish flights, clearances, gate assignments, crew authorization, baggage custody, weather observations, predictions, incident occurrence or completed maintenance.</p>
       <div className="page-header">
         <h1><i className="fas fa-cloud-sun"></i> Weather & NOTAMs</h1>
         <div className="header-actions">
@@ -145,14 +126,15 @@ function WeatherDashboard({ token, api }) {
         </div>
       )}
 
-      {loading && (
+      {recordLoading && (
         <div className="ai-loading" style={{ margin: '20px 0' }}><div className="spinner"></div><span>Loading...</span></div>
       )}
 
       <div className="data-table-container" style={{ marginTop: '20px' }}>
+        {recordError && <div role="alert" className="ai-error">Could not load records: {recordError} <button type="button" className="btn-cancel" onClick={fetchData}>Retry loading records</button></div>}
         <table className="data-table">
           <thead>
-            <tr>
+            <tr><th>Record classification</th>
               <th>Station</th>
               <th>Type</th>
               <th>Temp</th>
@@ -166,6 +148,7 @@ function WeatherDashboard({ token, api }) {
           <tbody>
             {items.map(item => (
               <tr key={item.id} onClick={() => setSelected(item)}>
+                  <td><small>{item.record_kind === 'planning_draft' ? 'Planning draft — no operational evidence' : 'Recorded source'}</small></td>
                 <td><strong>{item.station_id}</strong></td>
                 <td><span className={`status-badge status-${item.report_type?.toLowerCase()}`}>{item.report_type}</span></td>
                 <td>{item.temperature_c != null ? `${item.temperature_c}°C` : '-'}</td>
@@ -173,7 +156,7 @@ function WeatherDashboard({ token, api }) {
                 <td>{item.visibility_miles != null ? `${item.visibility_miles} mi` : '-'}</td>
                 <td>{item.ceiling_feet != null ? `${item.ceiling_feet} ft` : '-'}</td>
                 <td>{item.conditions ? <span className={`status-badge status-${item.conditions.toLowerCase()}`}>{item.conditions}</span> : '-'}</td>
-                <td>{new Date(item.reported_at).toLocaleString()}</td>
+                <td>{item.reported_at ? new Date(item.reported_at).toLocaleString() : 'Not observed'}</td>
               </tr>
             ))}
           </tbody>
@@ -197,7 +180,7 @@ function WeatherDashboard({ token, api }) {
           title={`Weather Report - ${selected.station_id} ${selected.report_type}`}
           item={selected}
           fields={detailFields}
-          onClose={() => setSelected(null)}
+          onClose={() => {recordWrite.cancel();setSelected(null);}}
           onEdit={handleEdit}
           onDelete={handleDelete}
         />
@@ -208,7 +191,7 @@ function WeatherDashboard({ token, api }) {
           title={editItem ? 'Edit Weather Report' : 'New Weather Report'}
           fields={formFields}
           initialData={editItem}
-          onClose={() => { setShowForm(false); setEditItem(null); }}
+          onClose={() => {recordWrite.cancel();setShowForm(false);setEditItem(null);}}
           onSave={handleSave}
         />
       )}

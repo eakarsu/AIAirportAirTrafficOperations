@@ -1,169 +1,19 @@
-import React, { useState, useEffect, useCallback } from 'react';
-
-const ANALYSIS_LABELS = {
-  'optimize-gates': 'Gate Optimization',
-  'optimize-crews': 'Crew Optimization',
-  'predict-delays': 'Delay Prediction',
-  'optimize-baggage': 'Baggage Optimization',
-  'optimize-runways': 'Runway Optimization',
-  'gate-conflicts': 'Gate Conflict Predictor',
-  'connection-analysis': 'Connection Analysis',
-  'weather-routing': 'Weather Routing',
-  'crew-cross-training': 'Crew Cross-Training',
-  'cost-optimization': 'Cost Optimization',
-  'incident-prediction': 'Incident Prediction',
-  'baggage-reconciliation': 'Baggage Reconciliation',
-  'sustainability-report': 'Sustainability Report',
-  'shift-handover': 'Shift Handover Report',
-  'predictive-maintenance': 'Predictive Maintenance',
-  'notam-briefing': 'NOTAM Briefing',
-  'runway-simulator': 'Runway Capacity Simulator',
-  'traffic-forecast': 'Traffic Volume Forecast',
-  'emergency-response': 'Emergency Response',
-};
-
-const ALL_TYPES = Object.entries(ANALYSIS_LABELS).map(([value, label]) => ({ value, label }));
-
-function AIHistory({ token, api }) {
-  const [items, setItems] = useState([]);
-  const [pagination, setPagination] = useState({ page: 1, limit: 20, total: 0, total_pages: 0 });
-  const [page, setPage] = useState(1);
-  const [typeFilter, setTypeFilter] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [selected, setSelected] = useState(null);
-  const [error, setError] = useState('');
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const typeParam = typeFilter ? `&type=${encodeURIComponent(typeFilter)}` : '';
-      const res = await fetch(`${api}/api/ai/history?page=${page}&limit=20${typeParam}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to load history');
-      setItems(data.data || []);
-      setPagination(data.pagination || { page: 1, total_pages: 1, total: 0, limit: 20 });
-    } catch (err) {
-      setError(err.message);
-    }
-    setLoading(false);
-  }, [api, token, page, typeFilter]);
-
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(1); }, [typeFilter]);
-
-  return (
-    <div>
-      <div className="page-header">
-        <h1><i className="fas fa-history"></i> AI Analysis History</h1>
-        <div className="header-actions">
-          <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            style={{ background: '#1e293b', border: '1px solid #334155', color: '#e2e8f0', padding: '8px 12px', borderRadius: 8, fontSize: 13 }}
-          >
-            <option value="">All Types</option>
-            {ALL_TYPES.map(t => (
-              <option key={t.value} value={t.value}>{t.label}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      <p style={{ color: '#94a3b8', marginBottom: 20 }}>
-        Past AI analyses run by you, with full input context and model output.
-      </p>
-
-      {error && (
-        <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>
-          <i className="fas fa-exclamation-triangle"></i> {error}
-        </div>
-      )}
-
-      {loading ? (
-        <div className="ai-loading"><div className="spinner"></div><span>Loading...</span></div>
-      ) : (
-        <>
-          <div className="data-table-container">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Type</th>
-                  <th>Created</th>
-                  <th>Input Summary</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((it) => (
-                  <tr key={it.id} onClick={() => setSelected(it)} style={{ cursor: 'pointer' }}>
-                    <td><strong>{ANALYSIS_LABELS[it.analysis_type] || it.analysis_type}</strong></td>
-                    <td>{new Date(it.created_at).toLocaleString()}</td>
-                    <td style={{ color: '#94a3b8', fontSize: 13 }}>
-                      {typeof it.input_data === 'string' ? it.input_data : JSON.stringify(it.input_data)}
-                    </td>
-                  </tr>
-                ))}
-                {items.length === 0 && (
-                  <tr><td colSpan={3} style={{ textAlign: 'center', padding: 40, color: '#64748b' }}>No analyses yet.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {pagination.total_pages > 1 && (
-            <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 16, alignItems: 'center' }}>
-              <button
-                className="btn-cancel"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-              >
-                <i className="fas fa-chevron-left"></i> Prev
-              </button>
-              <span style={{ color: '#94a3b8' }}>Page {pagination.page} of {pagination.total_pages} ({pagination.total} total)</span>
-              <button
-                className="btn-cancel"
-                disabled={page >= pagination.total_pages}
-                onClick={() => setPage((p) => Math.min(pagination.total_pages, p + 1))}
-              >
-                Next <i className="fas fa-chevron-right"></i>
-              </button>
-            </div>
-          )}
-        </>
-      )}
-
-      {selected && (
-        <div className="modal-overlay" onClick={() => setSelected(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 800 }}>
-            <div className="modal-header">
-              <h2><i className="fas fa-robot"></i> {ANALYSIS_LABELS[selected.analysis_type] || selected.analysis_type}</h2>
-              <button className="modal-close" onClick={() => setSelected(null)}><i className="fas fa-times"></i></button>
-            </div>
-            <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
-              <div style={{ color: '#94a3b8', fontSize: 13, marginBottom: 12 }}>
-                {new Date(selected.created_at).toLocaleString()}
-              </div>
-              <h4 style={{ color: '#fff', marginTop: 0 }}>Input</h4>
-              <pre style={{ background: '#0f172a', padding: 12, borderRadius: 8, color: '#cbd5e1', overflow: 'auto', fontSize: 12 }}>
-                {JSON.stringify(selected.input_data, null, 2)}
-              </pre>
-              <h4 style={{ color: '#fff' }}>Result</h4>
-              <pre style={{ background: '#0f172a', padding: 12, borderRadius: 8, color: '#cbd5e1', overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap' }}>
-                {typeof selected.result === 'string'
-                  ? selected.result
-                  : JSON.stringify(selected.result, null, 2)}
-              </pre>
-            </div>
-            <div className="modal-actions">
-              <button className="btn-cancel" onClick={() => setSelected(null)}>Close</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+import React,{useCallback,useEffect,useRef,useState}from'react';
+import AIReport,{readableLabel}from'../components/AIReport';
+import Modal from'../components/AIWorkspaceModal';
+import useNativeAIRequest from'../components/useNativeAIRequest';
+const protectedKey=key=>/(?:^|_)(?:ids?|references?|evidence|approved|approval|consent|signature|credentials?|password|token)(?:_|$)/i.test(key);
+const title=type=>readableLabel(type||'Saved report');
+export default function AIHistory({token,api}){
+ const[items,setItems]=useState([]),[loading,setLoading]=useState(false),[error,setError]=useState(''),[selected,setSelected]=useState(null),[draft,setDraft]=useState(null),[running,setRunning]=useState(false),[generated,setGenerated]=useState(null),read=useRef(null);
+ const ai=useNativeAIRequest(()=>setRunning(false)),headers={Authorization:`Bearer ${token}`,'Content-Type':'application/json'};
+ const load=useCallback(async()=>{read.current?.abort();const controller=new AbortController();read.current=controller;setLoading(true);setError('');try{const response=await fetch(`${api}/api/ai/history?limit=100`,{headers:{Authorization:`Bearer ${token}`},signal:controller.signal}),body=await response.json();if(!response.ok)throw new Error(body.error||'Could not load saved reports.');if(!Array.isArray(body.data))throw new Error('The report service returned an invalid list.');if(read.current===controller&&!controller.signal.aborted)setItems(body.data);}catch(failure){if(read.current===controller&&!controller.signal.aborted)setError(failure.message);}finally{if(read.current===controller&&!controller.signal.aborted)setLoading(false);}},[token,api]);
+ useEffect(()=>{load();return()=>{read.current?.abort();read.current=null;}},[load]);
+ const close=()=>{ai.cancel();setSelected(null);setDraft(null);setGenerated(null);};
+ const setValue=(path,value)=>setDraft(prior=>{const next=structuredClone(prior);let node=next;path.slice(0,-1).forEach(key=>node=node[key]);node[path.at(-1)]=value;return next;});
+ const inputs=(value,path=[])=>value&&typeof value==='object'&&!Array.isArray(value)?Object.entries(value).map(([key,child])=><div className="form-group" key={[...path,key].join('.')}><label>{readableLabel(key)}</label>{child&&typeof child==='object'&&!Array.isArray(child)?inputs(child,[...path,key]):Array.isArray(child)||protectedKey(key)?<><AIReport response={{[key]:child}} sourceLabel="Retained source context" title="Retained source context"/><small>Actual source references and authority are preserved; review them through their native workflow.</small></>:typeof child==='boolean'?<select value={String(child)} disabled={running} onChange={event=>setValue([...path,key],event.target.value==='true')}><option value="true">Yes</option><option value="false">No</option></select>:<textarea value={child??''} disabled={running} onChange={event=>setValue([...path,key],typeof child==='number'?(event.target.value===''?null:Number(event.target.value)):event.target.value)}/>}</div>):<AIReport response={value} title="Retained input"/>;
+ const generate=async event=>{event.preventDefault();const owner=ai.begin();if(!owner)return;setRunning(true);setError('');setGenerated(null);try{const response=await ai.fetch(owner,`${api}/api/ai/${selected.analysis_type}`,{method:'POST',headers,body:JSON.stringify(draft)}),body=await response.json();if(!response.ok)throw new Error(body.error||'Could not generate a new report.');if(!body.analysisId||!body.providerReceipt)throw new Error('The native service did not return a saved provider report.');if(ai.isCurrent(owner)){setGenerated(body);await load();}}catch(failure){if(ai.isCurrent(owner))setError(failure.message);}finally{if(ai.isCurrent(owner)){ai.finish(owner);setRunning(false);}}};
+ return <section><h1>Owned AI report history</h1><p>Saved genuine provider reports retain your complete input and verified source references. Original reports remain unchanged when preparing a new generation.</p><button type="button" className="btn-cancel" disabled={loading} onClick={load}>Refresh reports</button>{loading&&<p role="status">Loading owned reports…</p>}{error&&<div role="alert" className="ai-error">{error} <button type="button" onClick={load}>Retry saved reports</button></div>}{!loading&&!error&&<div className="data-table-container"><table className="data-table"><thead><tr><th>Report</th><th>Created</th><th>Input context</th></tr></thead><tbody>{items.map(item=><tr key={item.id} onClick={()=>{setSelected(item);setDraft(null);setGenerated(null);}}><td><button type="button" className="btn-cancel">{title(item.analysis_type)} #{item.id}</button></td><td>{item.created_at?new Date(item.created_at).toLocaleString():'Not recorded'}</td><td>{Object.keys(item.input_data||{}).map(readableLabel).join(' · ')||'Authorized source review'}</td></tr>)}</tbody></table>{!items.length&&<p>No owned provider report has been saved yet.</p>}</div>}
+ {selected&&<Modal title={title(selected.analysis_type)+' · Saved report'} onClose={close} footer={<><button type="button" className="btn-edit" disabled={running} onClick={()=>{setDraft(structuredClone(selected.input_data||{}));setGenerated(null);setError('');}}>Edit inputs for new report</button><button type="button" className="btn-delete" disabled title="Provider reports and provenance are retained">Delete retained report</button><button type="button" className="btn-cancel" onClick={close}>Cancel</button></>}><AIReport response={selected.result} model={selected.provider_model} sourceLabel="Retained OpenRouter report" title={title(selected.analysis_type)}/><p>Provider receipt: {selected.provider_request_id||'Not recorded'} · {selected.provider_model||'Not recorded'}</p>{draft&&<form onSubmit={generate}><h3>Review all saved inputs</h3>{inputs(draft)}<p>Actual sources, safety gates, authority and original reports remain retained. Review assumptions before requesting a new report.</p><button type="submit" className="btn-ai" disabled={running}>{running?'Generating…':'Generate with OpenRouter'}</button><button type="button" className="btn-cancel" onClick={ai.cancel}>Cancel AI request</button></form>}{error&&<p role="alert">{error}</p>}{ai.notice&&<p role="status">{ai.notice}</p>}{generated&&<AIReport response={generated} title="New advisory report"/>}</Modal>}
+ </section>;
 }
-
-export default AIHistory;

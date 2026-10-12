@@ -1,3 +1,8 @@
+import NativeAIContext from '../components/NativeAIContext';
+import AIReport from '../components/AIReport';
+import useNativeAIRequest from '../components/useNativeAIRequest';
+import useNativeRecordMutation from '../components/useNativeRecordMutation';
+import useNativeRecordList from '../components/useNativeRecordList';
 import React, { useState, useEffect, useCallback } from 'react';
 import DetailModal from '../components/DetailModal';
 import FormModal from '../components/FormModal';
@@ -32,49 +37,22 @@ function GateAssignment({ token, api }) {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [aiData, setAiData] = useState(null);
+  const [aiError, setAiError] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
-  const [loading, setLoading] = useState(false);
+
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${api}/api/gates?page=${page}&limit=20`, { headers: { Authorization: `Bearer ${token}` } });
-      const data = await res.json();
-      if (data.data) {
-        setItems(data.data);
-        setPagination(data.pagination);
-      } else {
-        setItems(Array.isArray(data) ? data : []);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-    setLoading(false);
-  }, [api, token, page]);
+  const { loading: recordLoading, error: recordError, reload: fetchData } = useNativeRecordList({
+    url: `${api}/api/gates?page=${page}&limit=20`, token,
+    onLoad: data => { setItems(data.items); if (data.pagination) setPagination(data.pagination); },
+  });
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Delete this gate assignment?')) return;
-    await fetch(`${api}/api/gates/${id}`, { method: 'DELETE', headers });
-    setSelected(null);
-    fetchData();
-  };
+  const recordWrite = useNativeRecordMutation({token,api,route:'gates',reload:fetchData,onSaved:()=>{setShowForm(false);setEditItem(null);},onDeleted:()=>setSelected(null)});
 
-  const handleSave = async (data) => {
-    const url = editItem ? `${api}/api/gates/${editItem.id}` : `${api}/api/gates`;
-    const method = editItem ? 'PUT' : 'POST';
-    const res = await fetch(url, { method, headers, body: JSON.stringify(data) });
-    if (!res.ok) {
-      const err = await res.json();
-      alert(err.errors ? err.errors.map(e => e.msg).join(', ') : err.error || 'Save failed');
-      return;
-    }
-    setShowForm(false);
-    setEditItem(null);
-    fetchData();
-  };
+  const handleDelete = id => recordWrite.remove(id);
+  const handleSave = data => recordWrite.save(data, editItem?.id);
 
   const handleEdit = (item) => {
     setSelected(null);
@@ -82,21 +60,34 @@ function GateAssignment({ token, api }) {
     setShowForm(true);
   };
 
+  const [planningContext,setPlanningContext]=useState('');
+  const aiRequest = useNativeAIRequest(() => setAiLoading(false));
+
   const runAI = async () => {
-    setAiLoading(true);
+    const aiOwner = aiRequest.begin(); if (!aiOwner) return;
+    try {
+    setAiLoading(true);setAiError('');
     setAiData(null);
     try {
-      const res = await fetch(`${api}/api/ai/optimize-gates`, { method: 'POST', headers });
+      const res = await aiRequest.fetch(aiOwner,`${api}/api/ai/optimize-gates`, { method: 'POST', headers,
+        body: JSON.stringify({planning_context:planningContext}) });
       const data = await res.json();
       setAiData(data);
     } catch (err) {
+      if (!aiRequest.isCurrent(aiOwner)) return;
       setAiData({ error: err.message });
     }
-    setAiLoading(false);
+    if (aiRequest.isCurrent(aiOwner)) setAiLoading(false);
+    } finally { if (aiRequest.isCurrent(aiOwner)) { setAiLoading(false); aiRequest.finish(aiOwner); } }
   };
 
   return (
     <div>
+      <NativeAIContext title="GateAssignment" value={planningContext} onChange={setPlanningContext} disabled={aiLoading}/>
+      {recordWrite.error && <div role="alert" className="ai-error">{recordWrite.error}</div>}
+      <p className="planning-record-notice">Saved planning drafts are proposals. They do not establish flights, clearances, gate assignments, crew authorization, baggage custody, weather observations, predictions, incident occurrence or completed maintenance.</p>
+      {aiError && <div role="alert" className="ai-error">{aiError}</div>}
+      {aiRequest.notice && <p role="status">{aiRequest.notice}</p>}<button type="button" className="btn-cancel" onClick={aiRequest.cancel}>Cancel AI request</button>
       <div className="page-header">
         <h1><i className="fas fa-door-open"></i> Gate Assignment Optimization</h1>
         <div className="header-actions">
@@ -104,18 +95,19 @@ function GateAssignment({ token, api }) {
             <i className="fas fa-plus"></i> New Assignment
           </button>
           <button className="btn-ai" onClick={runAI} disabled={aiLoading}>
-            <i className="fas fa-robot"></i> {aiLoading ? 'Analyzing...' : 'AI Optimize'}
+            <i className="fas fa-robot"></i> {aiLoading ? 'Analyzing...' : 'Generate with OpenRouter'}
           </button>
         </div>
       </div>
 
-      {loading ? (
+      {recordLoading ? (
         <div className="ai-loading"><div className="spinner"></div><span>Loading...</span></div>
       ) : (
         <div className="data-table-container">
+          {recordError && <div role="alert" className="ai-error">Could not load records: {recordError} <button type="button" className="btn-cancel" onClick={fetchData}>Retry loading records</button></div>}
           <table className="data-table">
             <thead>
-              <tr>
+              <tr><th>Record classification</th>
                 <th>Flight</th>
                 <th>Airline</th>
                 <th>Gate</th>
@@ -129,6 +121,7 @@ function GateAssignment({ token, api }) {
             <tbody>
               {items.map(item => (
                 <tr key={item.id} onClick={() => setSelected(item)}>
+                  <td><small>{item.record_kind === 'planning_draft' ? 'Planning draft — no operational evidence' : 'Recorded source'}</small></td>
                   <td><strong>{item.flight_number}</strong></td>
                   <td>{item.airline}</td>
                   <td>{item.gate_number}</td>
@@ -139,8 +132,8 @@ function GateAssignment({ token, api }) {
                   <td><span className={`status-badge status-${item.status}`}>{item.status}</span></td>
                 </tr>
               ))}
-              {items.length === 0 && (
-                <tr><td colSpan={8} style={{ textAlign: 'center', padding: 40, color: '#64748b' }}>No assignments found.</td></tr>
+              {!recordError && items.length === 0 && (
+                <tr><td colSpan={9} style={{ textAlign: 'center', padding: 40, color: '#64748b' }}>No assignments found.</td></tr>
               )}
             </tbody>
           </table>
@@ -228,9 +221,9 @@ function GateAssignment({ token, api }) {
             </div>
           )}
 
-          {aiData.raw_response && (
+          {aiData && (
             <div className="ai-analysis-container">
-              <pre style={{ whiteSpace: 'pre-wrap', color: '#cbd5e1', fontSize: 13 }}>{aiData.raw_response}</pre>
+              <AIReport response={aiData} title="Advisory planning report" />
             </div>
           )}
         </div>
@@ -241,7 +234,7 @@ function GateAssignment({ token, api }) {
           title={`Gate Assignment - ${selected.flight_number}`}
           item={selected}
           fields={detailFields}
-          onClose={() => setSelected(null)}
+          onClose={() => {recordWrite.cancel();setSelected(null);}}
           onEdit={handleEdit}
           onDelete={handleDelete}
         />
@@ -252,7 +245,7 @@ function GateAssignment({ token, api }) {
           title={editItem ? 'Edit Gate Assignment' : 'New Gate Assignment'}
           fields={formFields}
           initialData={editItem}
-          onClose={() => { setShowForm(false); setEditItem(null); }}
+          onClose={() => {recordWrite.cancel();setShowForm(false);setEditItem(null);}}
           onSave={handleSave}
         />
       )}

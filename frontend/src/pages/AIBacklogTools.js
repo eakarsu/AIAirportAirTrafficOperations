@@ -1,8 +1,14 @@
+import AIReport from '../components/AIReport';
+import useNativeAIRequest from '../components/useNativeAIRequest';
+
+import FullAIExamples, { useFullAIExamples } from "../components/FullAIExamples.jsx";
 import React, { useState } from 'react';
 
 // Apply pass 5 — surfaces backlog AI / data endpoints added on the BE.
 // Each tool returns 503 with `missing: <ENV>` when its required env var is unset.
 function AIBacklogTools({ token, api }) {
+  const fullAIExamples = useFullAIExamples();
+
   const [active, setActive] = useState('passenger-experience');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -57,7 +63,11 @@ function AIBacklogTools({ token, api }) {
     }
   };
 
+  const aiRequest = useNativeAIRequest(() => setLoading(false));
+
   const run = async () => {
+    const aiOwner = aiRequest.begin(); if (!aiOwner) return;
+    try {
     setLoading(true); setError(''); setResult(null);
     const tool = tools.find((t) => t.id === active);
     try {
@@ -66,26 +76,29 @@ function AIBacklogTools({ token, api }) {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       };
       if (tool.method === 'POST') opts.body = JSON.stringify(buildBody());
-      const res = await fetch(`${api}${tool.path}`, opts);
-      const data = await res.json().catch(() => ({}));
+      const res = await aiRequest.fetch(aiOwner,`${api}${tool.path}`, opts);
+      const data = await res.json();
       if (!res.ok) {
         const missing = data.missing ? ` (missing: ${data.missing})` : '';
         throw new Error((data.error || `HTTP ${res.status}`) + missing);
       }
       setResult(data);
     } catch (err) {
+      if (!aiRequest.isCurrent(aiOwner)) return;
       setError(err.message);
     }
-    setLoading(false);
+    if (aiRequest.isCurrent(aiOwner)) setLoading(false);
+    } finally { if (aiRequest.isCurrent(aiOwner)) { setLoading(false); aiRequest.finish(aiOwner); } }
   };
 
   return (
-    <div>
+    <div data-full-ai-workspace="AIBacklogTools"><FullAIExamples controller={fullAIExamples} disabled={Boolean(loading)} />
+      {aiRequest.notice && <p role="status">{aiRequest.notice}</p>}<button type="button" className="btn-cancel" onClick={aiRequest.cancel}>Cancel AI request</button>
       <div className="page-header">
         <h1><i className="fas fa-toolbox"></i> AI Backlog Tools</h1>
       </div>
       <p style={{ color: '#94a3b8', marginBottom: 16 }}>
-        Endpoints added in apply pass 5. Some return 503 with <code>missing: &lt;ENV&gt;</code> until creds are configured.
+        Review-only planning reports use OpenRouter. Live-source checks require configured credentials. Noise and emergency timeline tools are explicitly illustrative local calculations; no prediction, observation, dispatch or clearance is established.
       </p>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
@@ -102,45 +115,45 @@ function AIBacklogTools({ token, api }) {
       <div style={{ background: 'rgba(15,23,42,0.6)', padding: 16, borderRadius: 12, marginBottom: 16 }}>
         {active === 'passenger-experience' && (
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <label>Terminal <input value={pxTerminal} onChange={(e) => setPxTerminal(e.target.value)} /></label>
-            <label>Pax count <input type="number" value={pxPax} onChange={(e) => setPxPax(e.target.value)} /></label>
-            <label><input type="checkbox" checked={pxPeak} onChange={(e) => setPxPeak(e.target.checked)} /> Peak hour</label>
+            <label>Terminal <input value={pxTerminal} onChange={(e) => setPxTerminal(e.target.value)} data-full-ai-field={fullAIExamples.bind({ current: pxTerminal, change: (e) => setPxTerminal(e.target.value), label: "pxTerminal", manual: false, json: false, sample: 'A' }, "p1-4902", undefined)} /></label>
+            <label>Pax count <input type="number" value={pxPax} onChange={(e) => setPxPax(e.target.value)} data-full-ai-field={fullAIExamples.bind({ current: pxPax, change: (e) => setPxPax(e.target.value), label: "pxPax", manual: false, json: false, sample: 2500 }, "p1-5016", undefined)} /></label>
+            <label><input type="checkbox" checked={pxPeak} onChange={(e) => setPxPeak(e.target.checked)} data-full-ai-field={fullAIExamples.bind({ current: pxPeak, change: (e) => setPxPeak(e.target.checked), label: "pxPeak", manual: false, json: false, sample: false }, "p1-5124", undefined)} /> Peak hour</label>
           </div>
         )}
         {active === 'revenue-management' && (
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <label>Window start <input value={rmStart} onChange={(e) => setRmStart(e.target.value)} placeholder="YYYY-MM-DD HH:MM" /></label>
-            <label>Window end <input value={rmEnd} onChange={(e) => setRmEnd(e.target.value)} placeholder="YYYY-MM-DD HH:MM" /></label>
-            <label>Base gate fee USD <input type="number" value={rmBaseGate} onChange={(e) => setRmBaseGate(e.target.value)} /></label>
-            <label>Base slot fee USD <input type="number" value={rmBaseSlot} onChange={(e) => setRmBaseSlot(e.target.value)} /></label>
+            <label>Window start <input type="datetime-local" value={rmStart} onChange={(e) => setRmStart(e.target.value)} placeholder="YYYY-MM-DD HH:MM" data-full-ai-field={fullAIExamples.bind({ current: rmStart, change: (e) => setRmStart(e.target.value), label: "rmStart", manual: false, json: false, sample: '' }, "p1-5408", undefined)} /></label>
+            <label>Window end <input type="datetime-local" value={rmEnd} onChange={(e) => setRmEnd(e.target.value)} placeholder="YYYY-MM-DD HH:MM" data-full-ai-field={fullAIExamples.bind({ current: rmEnd, change: (e) => setRmEnd(e.target.value), label: "rmEnd", manual: false, json: false, sample: '' }, "p1-5548", undefined)} /></label>
+            <label>Base gate fee USD <input type="number" value={rmBaseGate} onChange={(e) => setRmBaseGate(e.target.value)} data-full-ai-field={fullAIExamples.bind({ current: rmBaseGate, change: (e) => setRmBaseGate(e.target.value), label: "rmBaseGate", manual: false, json: false, sample: 350 }, "p1-5691", undefined)} /></label>
+            <label>Base slot fee USD <input type="number" value={rmBaseSlot} onChange={(e) => setRmBaseSlot(e.target.value)} data-full-ai-field={fullAIExamples.bind({ current: rmBaseSlot, change: (e) => setRmBaseSlot(e.target.value), label: "rmBaseSlot", manual: false, json: false, sample: 1500 }, "p1-5827", undefined)} /></label>
           </div>
         )}
         {active === 'multi-agency' && (
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <label>Incident type <input value={mcType} onChange={(e) => setMcType(e.target.value)} /></label>
+            <label>Incident type <input value={mcType} onChange={(e) => setMcType(e.target.value)} data-full-ai-field={fullAIExamples.bind({ current: mcType, change: (e) => setMcType(e.target.value), label: "mcType", manual: false, json: false, sample: 'aircraft_fire' }, "p1-6098", undefined)} /></label>
             <label>Severity
-              <select value={mcSeverity} onChange={(e) => setMcSeverity(e.target.value)}>
+              <select value={mcSeverity} onChange={(e) => setMcSeverity(e.target.value)} data-full-ai-field={fullAIExamples.bind({ current: mcSeverity, change: (e) => setMcSeverity(e.target.value), label: "mcSeverity", manual: false, json: false, sample: 'high' }, "p1-6217", undefined)}>
                 <option>low</option><option>medium</option><option>high</option><option>critical</option>
               </select>
             </label>
-            <label>Location <input value={mcLocation} onChange={(e) => setMcLocation(e.target.value)} /></label>
+            <label>Location <input value={mcLocation} onChange={(e) => setMcLocation(e.target.value)} data-full-ai-field={fullAIExamples.bind({ current: mcLocation, change: (e) => setMcLocation(e.target.value), label: "mcLocation", manual: false, json: false, sample: 'Runway 04R' }, "p1-6472", undefined)} /></label>
           </div>
         )}
         {active === 'noise' && (
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <label>Runway <input value={niRunway} onChange={(e) => setNiRunway(e.target.value)} /></label>
-            <label>Ops / hour <input type="number" value={niOps} onChange={(e) => setNiOps(e.target.value)} /></label>
+            <label>Runway <input value={niRunway} onChange={(e) => setNiRunway(e.target.value)} data-full-ai-field={fullAIExamples.bind({ current: niRunway, change: (e) => setNiRunway(e.target.value), label: "niRunway", manual: false, json: false, sample: '04R' }, "p1-6715", undefined)} /></label>
+            <label>Ops / hour <input type="number" value={niOps} onChange={(e) => setNiOps(e.target.value)} data-full-ai-field={fullAIExamples.bind({ current: niOps, change: (e) => setNiOps(e.target.value), label: "niOps", manual: false, json: false, sample: 30 }, "p1-6826", undefined)} /></label>
           </div>
         )}
         {active === 'emergency-sim' && (
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <label>Incident type <input value={esType} onChange={(e) => setEsType(e.target.value)} /></label>
+            <label>Incident type <input value={esType} onChange={(e) => setEsType(e.target.value)} data-full-ai-field={fullAIExamples.bind({ current: esType, change: (e) => setEsType(e.target.value), label: "esType", manual: false, json: false, sample: 'aircraft_fire' }, "p1-7088", undefined)} /></label>
             <label>Severity
-              <select value={esSeverity} onChange={(e) => setEsSeverity(e.target.value)}>
+              <select value={esSeverity} onChange={(e) => setEsSeverity(e.target.value)} data-full-ai-field={fullAIExamples.bind({ current: esSeverity, change: (e) => setEsSeverity(e.target.value), label: "esSeverity", manual: false, json: false, sample: 'medium' }, "p1-7207", undefined)}>
                 <option>low</option><option>medium</option><option>high</option><option>critical</option>
               </select>
             </label>
-            <label>Responders <input type="number" value={esResponders} onChange={(e) => setEsResponders(e.target.value)} /></label>
+            <label>Responders <input type="number" value={esResponders} onChange={(e) => setEsResponders(e.target.value)} data-full-ai-field={fullAIExamples.bind({ current: esResponders, change: (e) => setEsResponders(e.target.value), label: "esResponders", manual: false, json: false, sample: 4 }, "p1-7464", undefined)} /></label>
           </div>
         )}
         {(active === 'adsb' || active === 'faa' || active === 'airline') && (
@@ -148,21 +161,19 @@ function AIBacklogTools({ token, api }) {
         )}
         <div style={{ marginTop: 12 }}>
           <button className="btn-ai" onClick={run} disabled={loading}>
-            <i className="fas fa-robot"></i> {loading ? 'Running...' : 'Run'}
+            <i className="fas fa-robot"></i> {loading ? 'Running…' : ['noise','emergency-sim'].includes(active) ? 'Calculate illustrative local model' : ['adsb','faa','airline'].includes(active) ? 'Check configured source' : 'Generate with OpenRouter'}
           </button>
         </div>
       </div>
 
       {error && (
-        <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>
+        <div role="alert" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>
           {error}
         </div>
       )}
 
       {result && (
-        <pre style={{ background: '#0b1220', color: '#cbd5e1', padding: 16, borderRadius: 12, overflow: 'auto', maxHeight: 500 }}>
-          {JSON.stringify(result, null, 2)}
-        </pre>
+        <AIReport response={result} sourceLabel={['noise','emergency-sim'].includes(active)?'Illustrative local calculation':['adsb','faa','airline'].includes(active)?'Configured source check':'OpenRouter advisory report'} title={['noise','emergency-sim'].includes(active)?'Illustrative local model':'Advisory planning report'} />
       )}
     </div>
   );

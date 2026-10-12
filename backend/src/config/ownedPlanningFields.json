@@ -1,0 +1,558 @@
+{
+  "flights": {
+    "table": "flight_schedule",
+    "fields": [
+      {
+        "key": "flight_number",
+        "type": "text",
+        "required": true,
+        "maxLength": 20
+      },
+      {
+        "key": "airline",
+        "type": "text",
+        "required": true,
+        "maxLength": 100
+      },
+      {
+        "key": "origin",
+        "type": "text",
+        "required": true,
+        "maxLength": 10
+      },
+      {
+        "key": "destination",
+        "type": "text",
+        "required": true,
+        "maxLength": 10
+      },
+      {
+        "key": "scheduled_time",
+        "type": "datetime-local",
+        "required": true
+      },
+      {
+        "key": "flight_type",
+        "type": "select",
+        "required": true,
+        "maxLength": 20
+      },
+      {
+        "key": "aircraft_type",
+        "type": "text",
+        "required": true,
+        "maxLength": 50
+      },
+      {
+        "key": "terminal",
+        "type": "select",
+        "required": false,
+        "maxLength": 5
+      },
+      {
+        "key": "gate",
+        "type": "text",
+        "required": false,
+        "maxLength": 10
+      },
+      {
+        "key": "status",
+        "type": "select",
+        "required": false,
+        "maxLength": 30
+      }
+    ]
+  },
+  "gates": {
+    "table": "gate_assignments",
+    "fields": [
+      {
+        "key": "flight_number",
+        "type": "text",
+        "required": true,
+        "maxLength": 20
+      },
+      {
+        "key": "airline",
+        "type": "text",
+        "required": true,
+        "maxLength": 100
+      },
+      {
+        "key": "gate_number",
+        "type": "text",
+        "required": true,
+        "maxLength": 10
+      },
+      {
+        "key": "terminal",
+        "type": "select",
+        "required": true,
+        "maxLength": 5
+      },
+      {
+        "key": "aircraft_type",
+        "type": "text",
+        "required": true,
+        "maxLength": 50
+      },
+      {
+        "key": "scheduled_time",
+        "type": "datetime-local",
+        "required": true
+      },
+      {
+        "key": "status",
+        "type": "select",
+        "required": false,
+        "maxLength": 30
+      },
+      {
+        "key": "passenger_count",
+        "type": "number",
+        "required": false,
+        "integer": true
+      }
+    ]
+  },
+  "crews": {
+    "table": "ground_crews",
+    "fields": [
+      {
+        "key": "crew_name",
+        "type": "text",
+        "required": true,
+        "maxLength": 100
+      },
+      {
+        "key": "crew_type",
+        "type": "select",
+        "required": true,
+        "maxLength": 50
+      },
+      {
+        "key": "members_count",
+        "type": "number",
+        "required": true,
+        "integer": true
+      },
+      {
+        "key": "shift_start",
+        "type": "datetime-local",
+        "required": true
+      },
+      {
+        "key": "shift_end",
+        "type": "datetime-local",
+        "required": true
+      },
+      {
+        "key": "assigned_terminal",
+        "type": "select",
+        "required": true,
+        "maxLength": 5
+      },
+      {
+        "key": "status",
+        "type": "select",
+        "required": false,
+        "maxLength": 30
+      },
+      {
+        "key": "specialization",
+        "type": "text",
+        "required": true,
+        "maxLength": 100
+      }
+    ]
+  },
+  "delays": {
+    "table": "delay_predictions",
+    "fields": [
+      {
+        "key": "flight_number",
+        "type": "text",
+        "required": true,
+        "maxLength": 20
+      },
+      {
+        "key": "airline",
+        "type": "text",
+        "required": true,
+        "maxLength": 100
+      },
+      {
+        "key": "origin",
+        "type": "text",
+        "required": true,
+        "maxLength": 10
+      },
+      {
+        "key": "destination",
+        "type": "text",
+        "required": true,
+        "maxLength": 10
+      },
+      {
+        "key": "scheduled_departure",
+        "type": "datetime-local",
+        "required": true
+      },
+      {
+        "key": "predicted_delay_min",
+        "type": "number",
+        "required": false,
+        "integer": true
+      },
+      {
+        "key": "delay_reason",
+        "type": "text",
+        "required": true,
+        "maxLength": 255
+      },
+      {
+        "key": "confidence_score",
+        "type": "number",
+        "required": false
+      },
+      {
+        "key": "rebooking_suggested",
+        "type": "select",
+        "required": false
+      },
+      {
+        "key": "affected_passengers",
+        "type": "number",
+        "required": false,
+        "integer": true
+      }
+    ]
+  },
+  "baggage": {
+    "table": "baggage_tracking",
+    "fields": [
+      {
+        "key": "tag_id",
+        "type": "text",
+        "required": true,
+        "maxLength": 20
+      },
+      {
+        "key": "flight_number",
+        "type": "text",
+        "required": true,
+        "maxLength": 20
+      },
+      {
+        "key": "passenger_name",
+        "type": "text",
+        "required": true,
+        "maxLength": 255
+      },
+      {
+        "key": "origin",
+        "type": "text",
+        "required": true,
+        "maxLength": 10
+      },
+      {
+        "key": "destination",
+        "type": "text",
+        "required": true,
+        "maxLength": 10
+      },
+      {
+        "key": "current_location",
+        "type": "text",
+        "required": true,
+        "maxLength": 100
+      },
+      {
+        "key": "status",
+        "type": "select",
+        "required": false,
+        "maxLength": 30
+      },
+      {
+        "key": "weight_kg",
+        "type": "number",
+        "required": false
+      },
+      {
+        "key": "priority",
+        "type": "select",
+        "required": false,
+        "maxLength": 20
+      }
+    ]
+  },
+  "runways": {
+    "table": "runway_utilization",
+    "fields": [
+      {
+        "key": "runway_id",
+        "type": "select",
+        "required": true,
+        "maxLength": 10
+      },
+      {
+        "key": "flight_number",
+        "type": "text",
+        "required": true,
+        "maxLength": 20
+      },
+      {
+        "key": "operation_type",
+        "type": "select",
+        "required": true,
+        "maxLength": 20
+      },
+      {
+        "key": "aircraft_type",
+        "type": "text",
+        "required": true,
+        "maxLength": 50
+      },
+      {
+        "key": "scheduled_time",
+        "type": "datetime-local",
+        "required": true
+      },
+      {
+        "key": "actual_time",
+        "type": "datetime-local",
+        "required": false
+      },
+      {
+        "key": "wind_speed_knots",
+        "type": "number",
+        "required": false,
+        "integer": true
+      },
+      {
+        "key": "visibility_miles",
+        "type": "number",
+        "required": false
+      },
+      {
+        "key": "status",
+        "type": "select",
+        "required": false,
+        "maxLength": 30
+      }
+    ]
+  },
+  "weather": {
+    "table": "weather_reports",
+    "fields": [
+      {
+        "key": "station_id",
+        "type": "text",
+        "required": true,
+        "maxLength": 10
+      },
+      {
+        "key": "report_type",
+        "type": "select",
+        "required": true,
+        "maxLength": 20
+      },
+      {
+        "key": "temperature_c",
+        "type": "number",
+        "required": false
+      },
+      {
+        "key": "wind_speed_knots",
+        "type": "number",
+        "required": false,
+        "integer": true
+      },
+      {
+        "key": "wind_direction",
+        "type": "text",
+        "required": false,
+        "maxLength": 10
+      },
+      {
+        "key": "visibility_miles",
+        "type": "number",
+        "required": false
+      },
+      {
+        "key": "ceiling_feet",
+        "type": "number",
+        "required": false,
+        "integer": true
+      },
+      {
+        "key": "conditions",
+        "type": "select",
+        "required": false,
+        "maxLength": 30
+      },
+      {
+        "key": "pressure_inhg",
+        "type": "number",
+        "required": false
+      },
+      {
+        "key": "humidity_percent",
+        "type": "number",
+        "required": false,
+        "integer": true
+      },
+      {
+        "key": "notam",
+        "type": "textarea",
+        "required": false
+      }
+    ]
+  },
+  "incidents": {
+    "table": "incident_reports",
+    "fields": [
+      {
+        "key": "incident_type",
+        "type": "select",
+        "required": true,
+        "maxLength": 50
+      },
+      {
+        "key": "severity",
+        "type": "select",
+        "required": true,
+        "maxLength": 20
+      },
+      {
+        "key": "location",
+        "type": "text",
+        "required": true,
+        "maxLength": 100
+      },
+      {
+        "key": "description",
+        "type": "textarea",
+        "required": true
+      },
+      {
+        "key": "reported_by",
+        "type": "text",
+        "required": true,
+        "maxLength": 100
+      },
+      {
+        "key": "flight_number",
+        "type": "text",
+        "required": false,
+        "maxLength": 20
+      },
+      {
+        "key": "status",
+        "type": "select",
+        "required": false,
+        "maxLength": 30
+      },
+      {
+        "key": "resolution",
+        "type": "textarea",
+        "required": false
+      }
+    ]
+  },
+  "maintenance": {
+    "table": "maintenance_logs",
+    "fields": [
+      {
+        "key": "equipment_type",
+        "type": "select",
+        "required": true,
+        "maxLength": 50
+      },
+      {
+        "key": "equipment_id",
+        "type": "text",
+        "required": true,
+        "maxLength": 30
+      },
+      {
+        "key": "maintenance_type",
+        "type": "select",
+        "required": true,
+        "maxLength": 30
+      },
+      {
+        "key": "description",
+        "type": "textarea",
+        "required": true
+      },
+      {
+        "key": "assigned_to",
+        "type": "text",
+        "required": false,
+        "maxLength": 100
+      },
+      {
+        "key": "scheduled_date",
+        "type": "datetime-local",
+        "required": true
+      },
+      {
+        "key": "priority",
+        "type": "select",
+        "required": false,
+        "maxLength": 20
+      },
+      {
+        "key": "status",
+        "type": "select",
+        "required": false,
+        "maxLength": 30
+      },
+      {
+        "key": "location",
+        "type": "text",
+        "required": false,
+        "maxLength": 100
+      }
+    ]
+  },
+  "airspace-rules": {
+    "table": "airspace_rule_plans",
+    "fields": [
+      {
+        "key": "scope",
+        "type": "text",
+        "required": true,
+        "maxLength": 40
+      },
+      {
+        "key": "target",
+        "type": "text",
+        "required": true,
+        "maxLength": 120
+      },
+      {
+        "key": "rule_type",
+        "type": "text",
+        "required": true,
+        "maxLength": 120
+      },
+      {
+        "key": "detail",
+        "type": "text",
+        "maxLength": 20000
+      },
+      {
+        "key": "priority",
+        "type": "number",
+        "integer": true
+      },
+      {
+        "key": "status",
+        "type": "text",
+        "maxLength": 30
+      }
+    ]
+  }
+}

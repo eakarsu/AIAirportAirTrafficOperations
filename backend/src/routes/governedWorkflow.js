@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const {AsyncLocalStorage}=require('node:async_hooks');
 const { createPolicy } = require('../services/governedWorkflow');
 
 module.exports = function createGovernedWorkflowRouter({ db, auth, config }) {
@@ -11,6 +12,9 @@ module.exports = function createGovernedWorkflowRouter({ db, auth, config }) {
   const approvalTable = `${table}_approvals`;
   const syncTable = `${table}_sync_events`;
   router.use(auth);
+  const requests=new AsyncLocalStorage();
+  router.use(async(req,res,next)=>{try{const found=await db.query('SELECT role FROM users WHERE id=$1',[req.user.id]);if(!found.rows[0]||found.rows[0].role!==req.user.role)return res.status(403).json({error:'ACCOUNT_ACCESS_CHANGED',message:'Your account access changed. Sign in again.'});const controller=new AbortController(),abort=()=>{if(!res.writableEnded)controller.abort();};req.once('aborted',abort);res.once('close',abort);res.once('finish',()=>{req.off('aborted',abort);res.off('close',abort);});if(req.aborted||res.destroyed)controller.abort();requests.run({user:req.user,signal:controller.signal},next);}catch(error){next(error);}});
+
 
   const actor = (req) => policy.actorFrom(req.user);
   const fail = (res, status, code, message) => res.status(status).json({ error: code, message });
@@ -18,8 +22,12 @@ module.exports = function createGovernedWorkflowRouter({ db, auth, config }) {
   const inTransaction = async (work) => {
     const client = await db.connect();
     try {
+      const request=requests.getStore();request.signal.throwIfAborted();
       await client.query('BEGIN');
+      const fresh=await client.query('SELECT role FROM users WHERE id=$1 FOR UPDATE',[request.user.id]);
+      if(fresh.rows[0]?.role!==request.user.role)throw Object.assign(new Error('Account access changed before saving.'),{status:403});
       const value = await work(client);
+      request.signal.throwIfAborted();
       await client.query('COMMIT');
       return value;
     } catch (error) {
@@ -192,7 +200,10 @@ module.exports = function createGovernedWorkflowRouter({ db, auth, config }) {
       client = await db.connect();
       const identity = actor(req);
       if (!validId(req.params.id)) return fail(res, 400, 'INVALID_ID', 'workflow id must be a positive integer');
+      const request=requests.getStore();request.signal.throwIfAborted();
       await client.query('BEGIN');
+      const fresh=await client.query('SELECT role FROM users WHERE id=$1 FOR UPDATE',[identity.id]);
+      if(fresh.rows[0]?.role!==identity.role)throw Object.assign(new Error('Account access changed before transitioning.'),{status:403});
       const found = await client.query(`SELECT * FROM ${table} WHERE id=$1 AND tenant_id=$2 FOR UPDATE`, [req.params.id, identity.tenantId]);
       const item = found.rows[0];
       if (!item) { await client.query('ROLLBACK'); return fail(res, 404, 'NOT_FOUND', 'workflow not found'); }
@@ -231,6 +242,7 @@ module.exports = function createGovernedWorkflowRouter({ db, auth, config }) {
         await client.query(`INSERT INTO ${approvalTable} (workflow_id, tenant_id, approver_id, approver_role, target_status, workflow_version, attestation, evidence_ids) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)`, [item.id, identity.tenantId, identity.id, identity.role, req.body.targetStatus, updated.rows[0].version, req.body.approval.attestation.trim(), JSON.stringify(req.body.approval.evidenceIds.map(String))]);
       }
       await client.query(`INSERT INTO ${auditTable} (workflow_id, tenant_id, actor_id, actor_role, action, before_state, after_state) VALUES ($1,$2,$3,$4,'transitioned',$5::jsonb,$6::jsonb)`, [item.id, identity.tenantId, identity.id, identity.role, JSON.stringify(item), JSON.stringify(updated.rows[0])]);
+      requests.getStore().signal.throwIfAborted();
       await client.query('COMMIT');
       res.json(updated.rows[0]);
     } catch (error) {

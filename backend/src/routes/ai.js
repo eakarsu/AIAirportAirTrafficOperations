@@ -2,7 +2,21 @@ const express = require('express');
 const router = express.Router();
 const fetch = require('node-fetch');
 const { body, validationResult } = require('express-validator');
-const pool = require('../db');
+const nativePool = require('../db');
+const { AsyncLocalStorage } = require('node:async_hooks');
+const context = new AsyncLocalStorage();
+const sourceTables = ['flight_schedule','gate_assignments','ground_crews','delay_predictions','baggage_tracking','runway_utilization','weather_reports','incident_reports','maintenance_logs'];
+const pool = { query(sql,params=[]) {
+  const current=context.getStore(); if(!current)throw new Error('An actual authenticated analysis context is required.');
+  let scoped=String(sql),args=[...params];
+  for(const table of sourceTables) if(new RegExp('\\bFROM '+table+'\\b','i').test(scoped)) {
+    if(!/\b(?:COUNT|SUM|AVG|GROUP BY|DISTINCT)\b/i.test(scoped)&&/^\s*SELECT\s+(?!\*|id\b)/i.test(scoped))scoped=scoped.replace(/^(\s*SELECT\s+)/i,'$1id, ');
+    const tenantIndex=args.push('user:'+current.user.id),actorIndex=args.push(current.user.id);
+    scoped=scoped.replace(new RegExp('\\bFROM '+table+'\\b','ig'),`FROM (SELECT * FROM ${table} WHERE tenant_id=$${tenantIndex} AND created_by=$${actorIndex} AND record_kind='actual_source') ${table}`);
+  }
+  if(/\bFROM ai_analyses\b/i.test(scoped)){const tenantIndex=args.push('user:'+current.user.id);scoped=scoped.replace(/\bFROM ai_analyses\b/ig,`FROM (SELECT * FROM ai_analyses WHERE provider_request_id IS NOT NULL AND tenant_id=$${tenantIndex}) ai_analyses`);}
+  return nativePool.query(scoped,args).then(result=>{for(const table of sourceTables)if(new RegExp('\\bFROM '+table+'\\b','i').test(sql))for(const row of result.rows||[])for(const id of Array.isArray(row.source_ids)?row.source_ids:[row.id])if(Number.isSafeInteger(Number(id))&&Number(id)>0&&!current.sourceReferences.some(source=>source.table===table&&source.id===String(id)))current.sourceReferences.push({table,id:String(id)});return result;});
+} };
 const { authenticateToken } = require('../middleware/auth');
 const { aiRateLimiter } = require('../middleware/rateLimiter');
 require('dotenv').config({ path: require('path').join(__dirname, '../../../.env') });
@@ -13,60 +27,55 @@ const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'anthropic/claude-3-5-s
 // ---------------------------------------------------------------------------
 // Robust 3-strategy JSON parser
 // ---------------------------------------------------------------------------
-function parseAIJson(text) {
-  if (!text || typeof text !== 'string') return null;
-  try { return JSON.parse(text); } catch (e) {}
-  const stripped = text.replace(/```(?:json)?\n?/g, '').replace(/```/g, '').trim();
-  try { return JSON.parse(stripped); } catch (e) {}
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start !== -1 && end !== -1 && end > start) {
-    try { return JSON.parse(text.slice(start, end + 1)); } catch (e) {}
-  }
-  return null;
-}
+function parseAIJson(text) { try { const value=JSON.parse(text);return value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).length>=2?value:null; } catch { return null; } }
+
+// Validate the actual current account and keep all source queries private to it.
+const requiredSources={
+ '/optimize-gates':['gate_assignments'],'/gate-conflicts':['gate_assignments'],
+ '/optimize-crews':['ground_crews'],'/crew-cross-training':['ground_crews'],
+ '/predict-delays':['delay_predictions'],'/optimize-baggage':['baggage_tracking'],
+ '/optimize-runways':['runway_utilization'],'/connection-analysis':['flight_schedule'],
+ '/cost-optimization':['flight_schedule'],'/incident-prediction':['incident_reports'],
+ '/baggage-reconciliation':['baggage_tracking'],'/sustainability-report':['flight_schedule'],
+ '/shift-handover':['incident_reports'],'/predictive-maintenance':['maintenance_logs'],
+ '/notam-briefing':['weather_reports'],
+ '/traffic-forecast':['flight_schedule'],
+};
+router.use(authenticateToken,async(req,res,next)=>{
+ try{const result=await nativePool.query('SELECT id,role FROM users WHERE id=$1',[req.user.id]),user=result.rows[0];if(!user||user.role!==req.user.role)return res.status(403).json({error:'Your account access changed. Sign in again.'});
+  if(req.body?.planning_context!==undefined&&(typeof req.body.planning_context!=='string'||req.body.planning_context.length>5000))return res.status(422).json({error:'Planning context must contain at most 5000 characters.'});
+  for(const table of requiredSources[req.path]||[]){const source=await nativePool.query('SELECT id FROM '+table+" WHERE tenant_id=$1 AND created_by=$2 AND record_kind='actual_source' LIMIT 1",['user:'+user.id,user.id]);if(!source.rowCount)return res.status(422).json({error:'This operational analysis needs actual authorized '+table.replaceAll('_',' ')+' source records. Planning drafts cannot supply operational evidence.'});}
+  const controller=new AbortController(),abort=()=>{if(!res.writableEnded)controller.abort();};req.once('aborted',abort);res.once('close',abort);res.once('finish',()=>{req.off('aborted',abort);res.off('close',abort);});if(req.aborted||res.destroyed)controller.abort();
+  if(req.path==='/connection-analysis'){const ids=req.body?.flight_ids;if(!Array.isArray(ids)||!ids.length||!ids.every(id=>Number.isSafeInteger(Number(id))&&Number(id)>0))return res.status(422).json({error:'Actual owned flight references are required.'});const owned=await nativePool.query("SELECT id FROM flight_schedule WHERE tenant_id=$1 AND created_by=$2 AND record_kind='actual_source' AND id=ANY($3)",['user:'+user.id,user.id,ids.map(Number)]);if(owned.rowCount!==new Set(ids.map(Number)).size)return res.status(422).json({error:'One or more selected flight references are unavailable to this account.'});}
+  if(req.path==='/baggage-reconciliation'){const tag=req.body?.missing_bag?.tag_id;if(typeof tag!=='string'||!(await nativePool.query("SELECT id FROM baggage_tracking WHERE tenant_id=$1 AND created_by=$2 AND record_kind='actual_source' AND tag_id=$3",['user:'+user.id,user.id,tag])).rowCount)return res.status(422).json({error:'An actual owned baggage tag reference is required.'});}
+  context.run({user,signal:controller.signal,input:req.body||{},receipt:null,analysisId:null,sourceReferences:[]} ,()=>{const send=res.json.bind(res);res.json=body=>{const current=context.getStore();return send(current?.analysisId&&body&&typeof body==='object'&&!Array.isArray(body)?{...body,analysisId:current.analysisId,providerReceipt:{requestId:current.receipt.requestId,model:current.receipt.model}}:body);};next();});
+ }catch(error){res.status(500).json({error:'Could not verify the account or its authorized analysis sources.'});}
+});
 
 // ---------------------------------------------------------------------------
 // OpenRouter API call
 // ---------------------------------------------------------------------------
 async function callOpenRouter(prompt, systemPrompt, options = {}) {
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'http://localhost:3000',
-      'X-Title': 'AI Airport Operations'
-    },
-    body: JSON.stringify({
-      model: options.model || OPENROUTER_MODEL,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: prompt }
-      ],
-      temperature: options.temperature !== undefined ? options.temperature : 0.2,
-      max_tokens: options.max_tokens || 4096
-    })
-  });
-
-  const data = await response.json();
-  if (data.error) throw new Error(data.error.message || 'OpenRouter API error');
-  if (!data.choices?.[0]?.message?.content) throw new Error('Invalid AI response: missing content');
-  return data.choices[0].message.content;
+  const current=context.getStore();if(!current)throw new Error('Actual analysis context required.');current.signal.throwIfAborted();
+  if(current.input.planning_context)prompt+='\n\nUser supplied advisory review context:\n'+current.input.planning_context;
+  if(!OPENROUTER_API_KEY)throw new Error('OpenRouter is not configured.');
+  const response=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{Authorization:'Bearer '+OPENROUTER_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({model:options.model||OPENROUTER_MODEL,messages:[
+   {role:'system',content:'Advisory planning report only. Treat supplied unverified values as scenario assumptions. Do not invent operational facts, weather observations, evidence, aircraft clearance, authority, contact frequencies, delivered actions or completed responses. Any proposed operations require current authoritative sources and authorized human review. '+systemPrompt},
+   {role:'user',content:prompt}],temperature:options.temperature??0.2,max_tokens:options.max_tokens||4096}),signal:AbortSignal.any([current.signal,AbortSignal.timeout(45000)])});
+  const data=await response.json(),choice=data.choices?.[0],content=choice?.message?.content;
+  if(!response.ok||!data.id||typeof content!=='string'||!content.trim()||choice.message?.refusal||['length','content_filter'].includes(choice.finish_reason))throw new Error('OpenRouter did not return a complete usable report.');
+  if(/JSON/i.test(systemPrompt+' '+prompt)&&!parseAIJson(content))throw new Error('OpenRouter did not return a complete structured report.');
+  current.receipt={requestId:String(data.id),model:String(data.model||OPENROUTER_MODEL),content,prompt};return content;
 }
 
 // ---------------------------------------------------------------------------
 // Save analysis result to ai_analyses table
 // ---------------------------------------------------------------------------
 async function saveAnalysis(userId, analysisType, inputData, result) {
-  try {
-    await pool.query(
-      'INSERT INTO ai_analyses (user_id, analysis_type, input_data, result) VALUES ($1, $2, $3, $4)',
-      [userId || null, analysisType, JSON.stringify(inputData), JSON.stringify(result)]
-    );
-  } catch (err) {
-    console.error('Failed to save AI analysis:', err.message);
-  }
+ const current=context.getStore();if(!current||Number(userId)!==current.user.id||!current.receipt)throw new Error('A genuine owned provider receipt is required.');const client=await nativePool.connect();
+ try{current.signal.throwIfAborted();await client.query('BEGIN');const actor=await client.query('SELECT role FROM users WHERE id=$1 FOR UPDATE',[current.user.id]);if(actor.rows[0]?.role!==current.user.role)throw new Error('Your account access changed before saving.');
+  const saved=await client.query('INSERT INTO ai_analyses(user_id,analysis_type,input_data,result,tenant_id,provider_request_id,provider_model,result_text,provider_prompt,source_references) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',[current.user.id,analysisType,current.input,result,'user:'+current.user.id,current.receipt.requestId,current.receipt.model,current.receipt.content,current.receipt.prompt,JSON.stringify(current.sourceReferences)]);current.signal.throwIfAborted();await client.query('COMMIT');current.analysisId=saved.rows[0].id;return saved.rows[0];
+ }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}finally{client.release();}
 }
 
 // ---------------------------------------------------------------------------
@@ -308,8 +317,8 @@ router.get('/history', authenticateToken, async (req, res) => {
 
     const result = await pool.query(
       analysisType
-        ? 'SELECT id, analysis_type, input_data, result, created_at FROM ai_analyses WHERE user_id = $1 AND analysis_type = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4'
-        : 'SELECT id, analysis_type, input_data, result, created_at FROM ai_analyses WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3',
+        ? 'SELECT id, analysis_type, input_data, result, created_at, provider_model, provider_request_id, source_references FROM ai_analyses WHERE user_id = $1 AND analysis_type = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4'
+        : 'SELECT id, analysis_type, input_data, result, created_at, provider_model, provider_request_id, source_references FROM ai_analyses WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3',
       analysisType ? [userId, analysisType, limit, offset] : [userId, limit, offset]
     );
 
@@ -334,26 +343,13 @@ router.get('/history', authenticateToken, async (req, res) => {
 router.post('/gate-conflicts', authenticateToken, aiRateLimiter, async (req, res) => {
   try {
     const assignmentsResult = await pool.query(`
-      SELECT f.id AS flight_id, f.flight_number, f.airline, f.origin, f.destination,
-             f.scheduled_departure, f.status, f.gate_id, g.gate_number, g.terminal
-      FROM flights f
-      JOIN gates g ON g.id = f.gate_id
-      WHERE f.scheduled_departure BETWEEN NOW() AND NOW() + INTERVAL '4 hours'
-      ORDER BY f.gate_id, f.scheduled_departure ASC
-    `).catch(() => ({ rows: [] }));
-
-    // Fallback to gate_assignments if flights table isn't populated
-    let assignments = assignmentsResult.rows;
-    if (assignments.length === 0) {
-      const fallback = await pool.query(`
-        SELECT id AS flight_id, flight_number, airline, gate_number, terminal,
-               scheduled_time AS scheduled_departure, status, NULL AS gate_id
-        FROM gate_assignments
-        WHERE scheduled_time BETWEEN NOW() AND NOW() + INTERVAL '4 hours'
-        ORDER BY gate_number, scheduled_time ASC
-      `).catch(() => ({ rows: [] }));
-      assignments = fallback.rows;
-    }
+      SELECT id, id AS flight_id, flight_number, airline, gate_number, terminal,
+             scheduled_time AS scheduled_departure, status, NULL AS gate_id
+      FROM gate_assignments
+      WHERE scheduled_time BETWEEN NOW() AND NOW() + INTERVAL '4 hours'
+      ORDER BY gate_number, scheduled_time ASC
+    `);
+    const assignments = assignmentsResult.rows;
 
     const conflicts = [];
     const gateMap = {};
@@ -432,7 +428,7 @@ router.post(
       const arrivingResult = await pool.query(
         'SELECT * FROM flight_schedule WHERE id = ANY($1) ORDER BY scheduled_time ASC',
         [flight_ids]
-      ).catch(() => pool.query('SELECT * FROM flights WHERE id = ANY($1)', [flight_ids]));
+      );
       const arrivingFlights = arrivingResult.rows;
 
       if (arrivingFlights.length === 0) {
@@ -445,7 +441,7 @@ router.post(
           AND status IN ('on_time', 'boarding')
         ORDER BY scheduled_time ASC
         LIMIT 50
-      `).catch(() => ({ rows: [] }));
+      `);
       const connectionFlights = connectionsResult.rows;
 
       const prompt = `Analyze passenger connection risks at an airport.
@@ -586,15 +582,15 @@ router.post('/cost-optimization', authenticateToken, aiRateLimiter, async (req, 
     const flightsResult = await pool.query(`
       SELECT flight_number, airline, scheduled_time, status, terminal, gate
       FROM flight_schedule ORDER BY scheduled_time DESC LIMIT 100
-    `).catch(() => ({ rows: [] }));
+    `);
 
     const delaysResult = await pool.query(
       'SELECT flight_number, predicted_delay_min, delay_reason, affected_passengers FROM delay_predictions ORDER BY id DESC LIMIT 50'
-    ).catch(() => ({ rows: [] }));
+    );
 
     const maintenanceResult = await pool.query(
       'SELECT equipment_type, maintenance_type, priority, status FROM maintenance_logs ORDER BY id DESC LIMIT 30'
-    ).catch(() => ({ rows: [] }));
+    );
 
     const prompt = `Analyze the flight schedule, delays, and maintenance to suggest cost optimizations (fuel burn, crew OT, gate premiums).
 
@@ -642,12 +638,12 @@ router.post('/incident-prediction', authenticateToken, aiRateLimiter, async (req
       SELECT
         EXTRACT(DOW FROM reported_at) AS day_of_week,
         EXTRACT(HOUR FROM reported_at) AS hour_of_day,
-        incident_type AS type, severity, location, COUNT(*) AS cnt
+        incident_type AS type, severity, location, COUNT(*) AS cnt, ARRAY_AGG(id) AS source_ids
       FROM incident_reports
       WHERE reported_at > NOW() - INTERVAL '180 days'
       GROUP BY day_of_week, hour_of_day, incident_type, severity, location
       ORDER BY cnt DESC LIMIT 200
-    `).catch(() => ({ rows: [] }));
+    `);
 
     const prompt = `Use historical incident patterns to predict high-risk windows for the next ${horizon} hours.
 
@@ -694,7 +690,7 @@ router.post(
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
     try {
       const { missing_bag } = req.body;
-      const tracking = await pool.query('SELECT * FROM baggage_tracking ORDER BY last_scan_time DESC LIMIT 200').catch(() => ({ rows: [] }));
+      const tracking = await pool.query('SELECT * FROM baggage_tracking ORDER BY last_scan_time DESC LIMIT 200');
 
       const prompt = `A bag is missing. Cross-check tracking data and suggest the most likely current locations.
 
@@ -735,7 +731,7 @@ Respond ONLY with valid JSON:
 router.post('/sustainability-report', authenticateToken, aiRateLimiter, async (req, res) => {
   try {
     const flights = await pool.query('SELECT flight_number, airline, origin, destination, flight_type, aircraft_type, status FROM flight_schedule ORDER BY scheduled_time DESC LIMIT 200');
-    const delays = await pool.query('SELECT flight_number, predicted_delay_min, delay_reason FROM delay_predictions ORDER BY id DESC LIMIT 100').catch(() => ({ rows: [] }));
+    const delays = await pool.query('SELECT flight_number, predicted_delay_min, delay_reason FROM delay_predictions ORDER BY id DESC LIMIT 100');
 
     const prompt = `Estimate taxi-out fuel burn and CO2 emissions from the recent flights and delays. Suggest greener routing and scheduling.
 
@@ -782,10 +778,10 @@ router.post('/shift-handover', authenticateToken, aiRateLimiter, async (req, res
   try {
     const hoursBack = 8;
     const [incidents, delays, gateChanges, maintenance] = await Promise.all([
-      pool.query(`SELECT * FROM incident_reports WHERE reported_at > NOW() - INTERVAL '${hoursBack} hours' ORDER BY severity DESC`).catch(() => ({ rows: [] })),
-      pool.query(`SELECT * FROM delay_predictions WHERE updated_at > NOW() - INTERVAL '${hoursBack} hours' OR created_at > NOW() - INTERVAL '${hoursBack} hours' ORDER BY predicted_delay_min DESC LIMIT 20`).catch(() => ({ rows: [] })),
-      pool.query(`SELECT * FROM gate_assignments WHERE updated_at > NOW() - INTERVAL '${hoursBack} hours' ORDER BY updated_at DESC LIMIT 20`).catch(() => ({ rows: [] })),
-      pool.query(`SELECT * FROM maintenance_logs WHERE updated_at > NOW() - INTERVAL '${hoursBack} hours' ORDER BY priority DESC LIMIT 20`).catch(() => ({ rows: [] })),
+      pool.query(`SELECT * FROM incident_reports WHERE reported_at > NOW() - INTERVAL '${hoursBack} hours' ORDER BY severity DESC`),
+      pool.query(`SELECT * FROM delay_predictions WHERE updated_at > NOW() - INTERVAL '${hoursBack} hours' OR created_at > NOW() - INTERVAL '${hoursBack} hours' ORDER BY predicted_delay_min DESC LIMIT 20`),
+      pool.query(`SELECT * FROM gate_assignments WHERE updated_at > NOW() - INTERVAL '${hoursBack} hours' ORDER BY updated_at DESC LIMIT 20`),
+      pool.query(`SELECT * FROM maintenance_logs WHERE updated_at > NOW() - INTERVAL '${hoursBack} hours' ORDER BY priority DESC LIMIT 20`),
     ]);
 
     const prompt = `Generate a comprehensive shift handover report covering the last ${hoursBack} hours of airport operations.
@@ -844,8 +840,8 @@ Respond ONLY with valid JSON:
 router.post('/predictive-maintenance', authenticateToken, aiRateLimiter, async (req, res) => {
   try {
     const [maintenance, incidents] = await Promise.all([
-      pool.query('SELECT * FROM maintenance_logs ORDER BY scheduled_date ASC LIMIT 100').catch(() => ({ rows: [] })),
-      pool.query(`SELECT type, location, COUNT(*) as cnt FROM incidents GROUP BY type, location ORDER BY cnt DESC LIMIT 50`).catch(() => ({ rows: [] })),
+      pool.query('SELECT * FROM maintenance_logs ORDER BY scheduled_date ASC LIMIT 100'),
+      pool.query(`SELECT incident_type AS type, location, COUNT(*) as cnt, ARRAY_AGG(id) AS source_ids FROM incident_reports GROUP BY incident_type, location ORDER BY cnt DESC LIMIT 50`),
     ]);
 
     const prompt = `Analyze maintenance log patterns and incident history to predict equipment failures before they occur.
@@ -900,15 +896,15 @@ router.post('/notam-briefing', authenticateToken, aiRateLimiter, async (req, res
   try {
     const notams = await pool.query(
       "SELECT * FROM weather_reports WHERE report_type = 'NOTAM' ORDER BY reported_at DESC LIMIT 20"
-    ).catch(() => ({ rows: [] }));
+    );
 
     const weather = await pool.query(
       "SELECT * FROM weather_reports WHERE report_type IN ('METAR', 'TAF') ORDER BY reported_at DESC LIMIT 10"
-    ).catch(() => ({ rows: [] }));
+    );
 
     const runways = await pool.query(
-      "SELECT DISTINCT runway_id, status FROM runway_utilization ORDER BY runway_id"
-    ).catch(() => ({ rows: [] }));
+      "SELECT runway_id, status, ARRAY_AGG(id) AS source_ids FROM runway_utilization GROUP BY runway_id,status ORDER BY runway_id"
+    );
 
     const prompt = `Parse and structure these NOTAMs and current weather to generate a comprehensive pilot/crew operational briefing.
 
@@ -969,7 +965,7 @@ router.post(
 
     try {
       const { scenario } = req.body;
-      const currentRunways = await pool.query('SELECT * FROM runway_utilization ORDER BY scheduled_time ASC LIMIT 50').catch(() => ({ rows: [] }));
+      const currentRunways = await pool.query('SELECT * FROM runway_utilization ORDER BY scheduled_time ASC LIMIT 50');
 
       const prompt = `Simulate the impact of a hypothetical scenario on airport runway capacity and operations.
 
@@ -1023,9 +1019,9 @@ router.post('/traffic-forecast', authenticateToken, aiRateLimiter, async (req, r
         FROM flight_schedule
         WHERE scheduled_time BETWEEN NOW() AND NOW() + INTERVAL '24 hours'
         ORDER BY scheduled_time ASC
-      `).catch(() => ({ rows: [] })),
-      pool.query('SELECT flight_number, predicted_delay_min, affected_passengers FROM delay_predictions ORDER BY predicted_delay_min DESC LIMIT 50').catch(() => ({ rows: [] })),
-      pool.query('SELECT gate_number, terminal, scheduled_time, passenger_count, status FROM gate_assignments ORDER BY scheduled_time ASC LIMIT 100').catch(() => ({ rows: [] })),
+      `),
+      pool.query('SELECT flight_number, predicted_delay_min, affected_passengers FROM delay_predictions ORDER BY predicted_delay_min DESC LIMIT 50'),
+      pool.query('SELECT gate_number, terminal, scheduled_time, passenger_count, status FROM gate_assignments ORDER BY scheduled_time ASC LIMIT 100'),
     ]);
 
     const prompt = `Forecast passenger volume, flight counts, and peak hours for the next 24 hours at this airport.
@@ -1096,26 +1092,26 @@ router.post(
           SELECT incident_type, severity, location, status FROM incident_reports
           WHERE reported_at > NOW() - INTERVAL '72 hours'
           ORDER BY reported_at DESC LIMIT 20
-        `).catch(() => ({ rows: [] })),
+        `),
         pool.query(`
           SELECT crew_name, crew_type, members_count, status, assigned_terminal, specialization
           FROM ground_crews WHERE status IN ('active', 'standby') ORDER BY crew_type ASC
-        `).catch(() => ({ rows: [] })),
+        `),
         pool.query(`
           SELECT equipment_id, equipment_type, status, priority, location FROM maintenance_logs
           WHERE status IN ('in_progress', 'scheduled') AND priority IN ('high', 'critical')
           ORDER BY priority DESC LIMIT 10
-        `).catch(() => ({ rows: [] })),
+        `),
       ]);
 
-      const prompt = `An emergency incident has been reported at the airport. Generate a comprehensive response plan.
+      const prompt = `Review this hypothetical emergency scenario and prepare an advisory training plan. No actual incident or operational authorization is established.
 
 Incident Details:
 - Type: ${incident_type}
 - Severity: ${severity}
 - Location: ${location}
 - Description: ${description || 'Not provided'}
-- Reported at: ${new Date().toISOString()}
+- Planning review drafted at: ${new Date().toISOString()}
 
 Available Crews:
 ${JSON.stringify(crews.rows, null, 2)}
@@ -1198,7 +1194,7 @@ router.post('/passenger-experience', authenticateToken, aiRateLimiter, async (re
   if (!aiKeyOr503(res)) return;
   try {
     const { terminal, current_pax_count = 0, peak_hour = false, focus_areas = [] } = req.body || {};
-    const flights = await pool.query('SELECT flight_number, scheduled_time, gate, status FROM gate_assignments ORDER BY scheduled_time ASC LIMIT 50').catch(() => ({ rows: [] }));
+    const flights = await pool.query('SELECT id, flight_number, scheduled_time, gate_number AS gate, status FROM gate_assignments ORDER BY scheduled_time ASC LIMIT 50');
     const prompt = `Generate a passenger-experience optimization plan for terminal ${terminal || 'all'} (current pax=${current_pax_count}, peak=${peak_hour}).
 Focus areas: ${JSON.stringify(focus_areas)}
 Connection-protection policy: protect pax with <=60min connection AND inbound delay >=15min; suggest gate moves, hold, or rebook only if MCT not met.
@@ -1308,7 +1304,7 @@ router.get('/adsb-live', authenticateToken, async (req, res) => {
     // a key. Returning a structured stub envelope with the requested bbox.
     const lat = parseFloat(process.env.AIRPORT_LAT || '40.6413');
     const lon = parseFloat(process.env.AIRPORT_LON || '-73.7781');
-    res.json({ bbox: { lat, lon, radius_nm: 40 }, aircraft: [], source: 'adsb-stub', note: 'Live feed wiring pending vendor selection.' });
+    res.status(503).json({error:'ADSB credentials are configured, but an authorized live vendor adapter is required. No live feed was checked.',configured:true,provider:'adsb'});
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1321,7 +1317,7 @@ router.get('/adsb-live', authenticateToken, async (req, res) => {
 router.get('/faa-nextgen', authenticateToken, async (req, res) => {
   const key = envKeyOr503(res, 'FAA_NEXTGEN_API_KEY');
   if (!key) return;
-  res.json({ feed: 'TFMData', delays: [], ground_delay_programs: [], note: 'NextGen wiring pending FAA SWIM credentials.' });
+  res.status(503).json({error:'FAA credentials are configured, but the authorized SWIM adapter is required. No live feed was checked.',configured:true,provider:'faa-swim'});
 });
 
 // ---------------------------------------------------------------------------
@@ -1331,7 +1327,7 @@ router.get('/faa-nextgen', authenticateToken, async (req, res) => {
 router.get('/airline-partners', authenticateToken, async (req, res) => {
   const key = envKeyOr503(res, 'AIRLINE_API_KEY');
   if (!key) return;
-  res.json({ partners: [], oooi_events: [], codeshare_schedules: [], note: 'Airline partner wiring pending vendor selection.' });
+  res.status(503).json({error:'Airline credentials are configured, but an authorized partner adapter is required. No delivery or feed check is asserted.',configured:true,provider:'airline-partner'});
 });
 
 // ---------------------------------------------------------------------------

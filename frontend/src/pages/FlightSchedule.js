@@ -1,3 +1,5 @@
+import useNativeRecordMutation from '../components/useNativeRecordMutation';
+import useNativeRecordList from '../components/useNativeRecordList';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import DetailModal from '../components/DetailModal';
 import FormModal from '../components/FormModal';
@@ -36,28 +38,15 @@ function FlightSchedule({ token, api }) {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [filter, setFilter] = useState('all');
-  const [loading, setLoading] = useState(false);
+
   const [countdown, setCountdown] = useState(30);
   const countdownRef = useRef(null);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const typeParam = filter !== 'all' ? `&type=${filter}` : '';
-      const res = await fetch(`${api}/api/flights?page=${page}&limit=20${typeParam}`, { headers: { Authorization: `Bearer ${token}` } });
-      const data = await res.json();
-      if (data.data) {
-        setItems(data.data);
-        setPagination(data.pagination);
-      } else {
-        setItems(Array.isArray(data) ? data : []);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-    setLoading(false);
-  }, [api, token, page, filter]);
+  const { loading: recordLoading, error: recordError, reload: fetchData } = useNativeRecordList({
+    url: `${api}/api/flights?page=${page}&limit=20${filter !== 'all' ? '&type=' + filter : ''}`, token,
+    onLoad: data => { setItems(data.items); if (data.pagination) setPagination(data.pagination); },
+  });
 
   useEffect(() => { fetchData(); }, [fetchData]);
   useEffect(() => { setPage(1); }, [filter]);
@@ -66,7 +55,7 @@ function FlightSchedule({ token, api }) {
   useEffect(() => {
     const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchData]);
 
   useEffect(() => {
     countdownRef.current = setInterval(() => setCountdown(c => c <= 1 ? 30 : c - 1), 1000);
@@ -87,26 +76,10 @@ function FlightSchedule({ token, api }) {
     a.click(); URL.revokeObjectURL(url);
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Delete this flight?')) return;
-    await fetch(`${api}/api/flights/${id}`, { method: 'DELETE', headers });
-    setSelected(null);
-    fetchData();
-  };
+  const recordWrite = useNativeRecordMutation({token,api,route:'flights',reload:fetchData,onSaved:()=>{setShowForm(false);setEditItem(null);},onDeleted:()=>setSelected(null)});
 
-  const handleSave = async (data) => {
-    const url = editItem ? `${api}/api/flights/${editItem.id}` : `${api}/api/flights`;
-    const method = editItem ? 'PUT' : 'POST';
-    const res = await fetch(url, { method, headers, body: JSON.stringify(data) });
-    if (!res.ok) {
-      const err = await res.json();
-      alert(err.errors ? err.errors.map(e => e.msg).join(', ') : err.error || 'Save failed');
-      return;
-    }
-    setShowForm(false);
-    setEditItem(null);
-    fetchData();
-  };
+  const handleDelete = id => recordWrite.remove(id);
+  const handleSave = data => recordWrite.save(data, editItem?.id);
 
   const handleEdit = (item) => {
     setSelected(null);
@@ -116,6 +89,8 @@ function FlightSchedule({ token, api }) {
 
   return (
     <div>
+      {recordWrite.error && <div role="alert" className="ai-error">{recordWrite.error}</div>}
+      <p className="planning-record-notice">Saved planning drafts are proposals. They do not establish flights, clearances, gate assignments, crew authorization, baggage custody, weather observations, predictions, incident occurrence or completed maintenance.</p>
       <div className="page-header">
         <h1><i className="fas fa-plane"></i> Flight Schedule Board</h1>
         <div className="header-actions">
@@ -142,13 +117,14 @@ function FlightSchedule({ token, api }) {
         </div>
       </div>
 
-      {loading ? (
+      {recordLoading ? (
         <div className="ai-loading"><div className="spinner"></div><span>Loading...</span></div>
       ) : (
         <div className="data-table-container">
+          {recordError && <div role="alert" className="ai-error">Could not load records: {recordError} <button type="button" className="btn-cancel" onClick={fetchData}>Retry loading records</button></div>}
           <table className="data-table">
             <thead>
-              <tr>
+              <tr><th>Record classification</th>
                 <th>Flight</th>
                 <th>Airline</th>
                 <th>Origin</th>
@@ -163,6 +139,7 @@ function FlightSchedule({ token, api }) {
             <tbody>
               {items.map(item => (
                 <tr key={item.id} onClick={() => setSelected(item)}>
+                  <td><small>{item.record_kind === 'planning_draft' ? 'Planning draft — no operational evidence' : 'Recorded source'}</small></td>
                   <td><strong>{item.flight_number}</strong></td>
                   <td>{item.airline}</td>
                   <td>{item.origin}</td>
@@ -174,8 +151,8 @@ function FlightSchedule({ token, api }) {
                   <td><span className={`status-badge status-${item.status}`}>{item.status}</span></td>
                 </tr>
               ))}
-              {items.length === 0 && (
-                <tr><td colSpan={9} style={{ textAlign: 'center', padding: 40, color: '#64748b' }}>No flights found.</td></tr>
+              {!recordError && items.length === 0 && (
+                <tr><td colSpan={10} style={{ textAlign: 'center', padding: 40, color: '#64748b' }}>No flights found.</td></tr>
               )}
             </tbody>
           </table>
@@ -199,7 +176,7 @@ function FlightSchedule({ token, api }) {
           title={`Flight - ${selected.flight_number}`}
           item={selected}
           fields={detailFields}
-          onClose={() => setSelected(null)}
+          onClose={() => {recordWrite.cancel();setSelected(null);}}
           onEdit={handleEdit}
           onDelete={handleDelete}
         />
@@ -210,7 +187,7 @@ function FlightSchedule({ token, api }) {
           title={editItem ? 'Edit Flight' : 'New Flight'}
           fields={formFields}
           initialData={editItem}
-          onClose={() => { setShowForm(false); setEditItem(null); }}
+          onClose={() => {recordWrite.cancel();setShowForm(false);setEditItem(null);}}
           onSave={handleSave}
         />
       )}

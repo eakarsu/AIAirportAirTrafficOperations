@@ -1,3 +1,6 @@
+import NativeAIContext from '../components/NativeAIContext';
+import AIReport from '../components/AIReport';
+import useNativeAIRequest from '../components/useNativeAIRequest';
 import React, { useState } from 'react';
 
 function Sustainability({ token, api }) {
@@ -5,18 +8,26 @@ function Sustainability({ token, api }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const [planningContext,setPlanningContext]=useState('');
+  const aiRequest = useNativeAIRequest(() => setLoading(false));
+
   const run = async () => {
+    const aiOwner = aiRequest.begin(); if (!aiOwner) return;
+    try {
     setLoading(true); setError(''); setData(null);
     try {
-      const res = await fetch(`${api}/api/ai/sustainability-report`, {
+      const res = await aiRequest.fetch(aiOwner,`${api}/api/ai/sustainability-report`, {
         method: 'POST',
+        body: JSON.stringify({planning_context:planningContext}),
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || 'Analysis failed');
       setData(result);
-    } catch (err) { setError(err.message); }
-    setLoading(false);
+    } catch (err) {
+      if (!aiRequest.isCurrent(aiOwner)) return; setError(err.message); }
+    if (aiRequest.isCurrent(aiOwner)) setLoading(false);
+    } finally { if (aiRequest.isCurrent(aiOwner)) { setLoading(false); aiRequest.finish(aiOwner); } }
   };
 
   const fmt = (n) => typeof n === 'number' ? n.toLocaleString() : n;
@@ -24,17 +35,19 @@ function Sustainability({ token, api }) {
 
   return (
     <div>
+      <NativeAIContext title="Sustainability" value={planningContext} onChange={setPlanningContext} disabled={loading}/>
+      {aiRequest.notice && <p role="status">{aiRequest.notice}</p>}<button type="button" className="btn-cancel" onClick={aiRequest.cancel}>Cancel AI request</button>
       <div className="page-header">
         <h1><i className="fas fa-leaf"></i> Sustainability Reporter</h1>
         <button className="btn-ai" onClick={run} disabled={loading}>
-          <i className="fas fa-robot"></i> {loading ? 'Generating...' : 'Generate Report'}
+          <i className="fas fa-robot"></i> {loading ? 'Generating...' : 'Generate with OpenRouter'}
         </button>
       </div>
       <p style={{ color: '#94a3b8', marginBottom: 20 }}>
         Tracks taxiing time, fuel burn, emissions; suggests routes/schedules for green metric improvements.
       </p>
 
-      {error && <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>{error}</div>}
+      {error && <div role="alert" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>{error}</div>}
       {loading && <div className="ai-loading"><div className="spinner"></div><span>Calculating green metrics...</span></div>}
 
       {data && !loading && (
@@ -96,8 +109,8 @@ function Sustainability({ token, api }) {
             <div style={{ padding: 16, background: '#0f172a', borderRadius: 8, color: '#cbd5e1', marginTop: 16 }}>{data.summary}</div>
           )}
 
-          {data.raw_response && (
-            <pre style={{ background: '#0f172a', padding: 12, borderRadius: 8, color: '#cbd5e1', overflow: 'auto', whiteSpace: 'pre-wrap' }}>{data.raw_response}</pre>
+          {data && (
+            <AIReport response={data} title="Advisory planning report" />
           )}
         </div>
       )}

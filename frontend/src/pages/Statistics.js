@@ -1,20 +1,15 @@
+import useOwnedAirportStats from '../components/useOwnedAirportStats';
+import OwnedAirportCounts from '../components/OwnedAirportCounts';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 function Statistics({ token, api }) {
   const navigate = useNavigate();
-  const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetch(`${api}/api/stats`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.json())
-      .then(data => { setStats(data); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, [token, api]);
-
-  if (loading) return <div style={{ textAlign: 'center', padding: '60px', color: '#94a3b8' }}>Loading statistics...</div>;
-  if (!stats) return <div style={{ textAlign: 'center', padding: '60px', color: '#ef4444' }}>Failed to load statistics</div>;
+  const {stats,error,loading,load}=useOwnedAirportStats({token,api});
+  if(loading)return <p role="status">Loading owned statistics…</p>;
+  if(error)return <div role="alert">{error} <button type="button" onClick={load}>Retry statistics</button></div>;
+  if(!stats)return null;
+  if(!stats.operational_sources_available)return <section><h1>Owned airport record statistics</h1><button type="button" className="btn-cancel" onClick={load}>Refresh statistics</button><OwnedAirportCounts stats={stats}/></section>;
 
   const renderBreakdown = (data, colorFn) => (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
@@ -69,7 +64,7 @@ function Statistics({ token, api }) {
       stats: [
         { label: 'Tracked Flights', value: stats.delays.total },
         { label: 'Delayed Flights', value: stats.delays.delayed_flights },
-        { label: 'Avg Delay', value: `${stats.delays.avg_delay_min} min` },
+        { label: 'Avg Delay', value: stats.delays.avg_delay_min===null?'Not measured':`${stats.delays.avg_delay_min} min` },
         { label: 'Rebooking Suggested', value: stats.delays.rebooking_suggested },
         { label: 'Affected Passengers', value: stats.delays.affected_passengers.toLocaleString() },
       ],

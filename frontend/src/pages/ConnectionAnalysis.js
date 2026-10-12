@@ -1,3 +1,6 @@
+import useNativeRecordList from '../components/useNativeRecordList';
+import AIReport from '../components/AIReport';
+import useNativeAIRequest from '../components/useNativeAIRequest';
 import React, { useState, useEffect, useCallback } from 'react';
 
 function ConnectionAnalysis({ token, api }) {
@@ -12,27 +15,21 @@ function ConnectionAnalysis({ token, api }) {
     'Content-Type': 'application/json',
   };
 
-  const fetchFlights = useCallback(async () => {
-    try {
-      const res = await fetch(`${api}/api/flights?page=1&limit=100`, { headers: { Authorization: `Bearer ${token}` } });
-      const data = await res.json();
-      setFlights(Array.isArray(data) ? data : (data.data || []));
-    } catch (err) {
-      setError(err.message);
-    }
-  }, [api, token]);
-
-  useEffect(() => {
-    fetchFlights();
-  }, [fetchFlights]);
+  const {error:sourceError,loading:sourceLoading,reload:fetchFlights}=useNativeRecordList({url:`${api}/api/flights?page=1&limit=100`,token,onLoad:data=>setFlights(data.items)});
+  useEffect(()=>{fetchFlights();},[fetchFlights]);
 
   const toggleFlight = (id) => {
+    if(!flights.some(f=>f.id===id&&f.record_kind==='actual_source'))return;
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
   };
 
+  const aiRequest = useNativeAIRequest(() => setLoading(false));
+
   const runAnalysis = async () => {
+    const aiOwner = aiRequest.begin(); if (!aiOwner) return;
+    try {
     if (selectedIds.length === 0) {
       setError('Select at least one flight to analyze.');
       return;
@@ -41,7 +38,7 @@ function ConnectionAnalysis({ token, api }) {
     setError('');
     setData(null);
     try {
-      const res = await fetch(`${api}/api/ai/connection-analysis`, {
+      const res = await aiRequest.fetch(aiOwner,`${api}/api/ai/connection-analysis`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ flight_ids: selectedIds }),
@@ -50,9 +47,11 @@ function ConnectionAnalysis({ token, api }) {
       if (!res.ok) throw new Error(result.error || 'Analysis failed');
       setData(result);
     } catch (err) {
+      if (!aiRequest.isCurrent(aiOwner)) return;
       setError(err.message);
     }
-    setLoading(false);
+    if (aiRequest.isCurrent(aiOwner)) setLoading(false);
+    } finally { if (aiRequest.isCurrent(aiOwner)) { setLoading(false); aiRequest.finish(aiOwner); } }
   };
 
   const riskColor = (level) => {
@@ -65,11 +64,14 @@ function ConnectionAnalysis({ token, api }) {
 
   return (
     <div>
+      <div>{['Review one owned source','Review three owned sources','Review five owned sources'].map((label,index)=><button type="button" className="btn-cancel" key={label} disabled={loading||!flights.some(f=>f.record_kind==='actual_source')} onClick={()=>setSelectedIds(flights.filter(f=>f.record_kind==='actual_source').slice(0,[1,3,5][index]).map(f=>f.id))}>{label}</button>)}</div><p>Source choices use actual owned flight records. Planning drafts cannot supply a flight reference.</p>
+      {sourceLoading&&<p role="status">Loading owned flight sources…</p>}{sourceError&&<div role="alert">{sourceError} <button type="button" onClick={fetchFlights}>Retry flight sources</button></div>}
+      {aiRequest.notice && <p role="status">{aiRequest.notice}</p>}<button type="button" className="btn-cancel" onClick={aiRequest.cancel}>Cancel AI request</button>
       <div className="page-header">
         <h1><i className="fas fa-people-arrows"></i> Passenger Connection Saver</h1>
         <div className="header-actions">
           <button className="btn-ai" onClick={runAnalysis} disabled={loading || selectedIds.length === 0}>
-            <i className="fas fa-robot"></i> {loading ? 'Analyzing...' : `Analyze ${selectedIds.length} Selected`}
+            <i className="fas fa-robot"></i> {loading ? 'Analyzing...' : 'Generate with OpenRouter'}
           </button>
         </div>
       </div>
@@ -79,7 +81,7 @@ function ConnectionAnalysis({ token, api }) {
       </p>
 
       {error && (
-        <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>
+        <div role="alert" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>
           <i className="fas fa-exclamation-triangle"></i> {error}
         </div>
       )}
@@ -103,11 +105,12 @@ function ConnectionAnalysis({ token, api }) {
                 <td>
                   <input
                     type="checkbox"
+                    disabled={f.record_kind!=='actual_source'}
                     checked={selectedIds.includes(f.id)}
                     onChange={() => toggleFlight(f.id)}
                   />
                 </td>
-                <td><strong>{f.flight_number}</strong></td>
+                <td><strong>{f.flight_number}</strong>{f.record_kind==='planning_draft'&&<small>Planning draft — cannot supply operational evidence</small>}</td>
                 <td>{f.airline}</td>
                 <td>{f.origin}</td>
                 <td>{f.destination}</td>
@@ -177,9 +180,9 @@ function ConnectionAnalysis({ token, api }) {
             </div>
           )}
 
-          {data.raw_response && (
+          {data && (
             <div className="ai-analysis-container">
-              <pre style={{ whiteSpace: 'pre-wrap', color: '#cbd5e1', fontSize: 13 }}>{data.raw_response}</pre>
+              <AIReport response={data} title="Advisory planning report" />
             </div>
           )}
         </div>

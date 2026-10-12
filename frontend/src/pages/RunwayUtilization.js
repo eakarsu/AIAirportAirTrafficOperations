@@ -1,3 +1,8 @@
+import NativeAIContext from '../components/NativeAIContext';
+import AIReport from '../components/AIReport';
+import useNativeAIRequest from '../components/useNativeAIRequest';
+import useNativeRecordMutation from '../components/useNativeRecordMutation';
+import useNativeRecordList from '../components/useNativeRecordList';
 import React, { useState, useEffect, useCallback } from 'react';
 import DetailModal from '../components/DetailModal';
 import FormModal from '../components/FormModal';
@@ -32,34 +37,21 @@ function RunwayUtilization({ token, api }) {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [aiData, setAiData] = useState(null);
+  const [aiError, setAiError] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-  const fetchData = useCallback(async () => {
-    const res = await fetch(`${api}/api/runways?page=1&limit=100`, { headers: { Authorization: `Bearer ${token}` } });
-    const data = await res.json();
-    setItems(Array.isArray(data) ? data : (data.data || []));
-  }, [api, token]);
+  const { loading: recordLoading, error: recordError, reload: fetchData } = useNativeRecordList({
+    url: `${api}/api/runways?page=1&limit=100`, token,
+    onLoad: data => { setItems(data.items); },
+  });
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Delete this runway operation?')) return;
-    await fetch(`${api}/api/runways/${id}`, { method: 'DELETE', headers });
-    setSelected(null);
-    fetchData();
-  };
+  const recordWrite = useNativeRecordMutation({token,api,route:'runways',reload:fetchData,onSaved:()=>{setShowForm(false);setEditItem(null);},onDeleted:()=>setSelected(null)});
 
-  const handleSave = async (data) => {
-    if (editItem) {
-      await fetch(`${api}/api/runways/${editItem.id}`, { method: 'PUT', headers, body: JSON.stringify(data) });
-    } else {
-      await fetch(`${api}/api/runways`, { method: 'POST', headers, body: JSON.stringify(data) });
-    }
-    setShowForm(false);
-    setEditItem(null);
-    fetchData();
-  };
+  const handleDelete = id => recordWrite.remove(id);
+  const handleSave = data => recordWrite.save(data, editItem?.id);
 
   const handleEdit = (item) => {
     setSelected(null);
@@ -67,18 +59,26 @@ function RunwayUtilization({ token, api }) {
     setShowForm(true);
   };
 
+  const [planningContext,setPlanningContext]=useState('');
+  const aiRequest = useNativeAIRequest(() => setAiLoading(false));
+
   const runAI = async () => {
-    setAiLoading(true);
+    const aiOwner = aiRequest.begin(); if (!aiOwner) return;
+    try {
+    setAiLoading(true);setAiError('');
     setAiData(null);
     try {
-      const res = await fetch(`${api}/api/ai/optimize-runways`, { method: 'POST', headers });
+      const res = await aiRequest.fetch(aiOwner,`${api}/api/ai/optimize-runways`, { method: 'POST', headers,
+        body: JSON.stringify({planning_context:planningContext}) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'AI analysis failed');
       setAiData(data);
     } catch (err) {
-      setAiData({ raw_response: 'Error: ' + err.message });
+      if (!aiRequest.isCurrent(aiOwner)) return;
+      setAiData(null);setAiError(err.message);
     }
-    setAiLoading(false);
+    if (aiRequest.isCurrent(aiOwner)) setAiLoading(false);
+    } finally { if (aiRequest.isCurrent(aiOwner)) { setAiLoading(false); aiRequest.finish(aiOwner); } }
   };
 
   const severityColor = (s) => {
@@ -88,6 +88,11 @@ function RunwayUtilization({ token, api }) {
 
   return (
     <div>
+      <NativeAIContext title="RunwayUtilization" value={planningContext} onChange={setPlanningContext} disabled={aiLoading}/>
+      {recordWrite.error && <div role="alert" className="ai-error">{recordWrite.error}</div>}
+      <p className="planning-record-notice">Saved planning drafts are proposals. They do not establish flights, clearances, gate assignments, crew authorization, baggage custody, weather observations, predictions, incident occurrence or completed maintenance.</p>
+      {aiError && <div role="alert" className="ai-error">{aiError}</div>}
+      {aiRequest.notice && <p role="status">{aiRequest.notice}</p>}<button type="button" className="btn-cancel" onClick={aiRequest.cancel}>Cancel AI request</button>
       <div className="page-header">
         <h1><i className="fas fa-road"></i> Runway Utilization</h1>
         <div className="header-actions">
@@ -101,9 +106,10 @@ function RunwayUtilization({ token, api }) {
       </div>
 
       <div className="data-table-container">
+          {recordError && <div role="alert" className="ai-error">Could not load records: {recordError} <button type="button" className="btn-cancel" onClick={fetchData}>Retry loading records</button></div>}
         <table className="data-table">
           <thead>
-            <tr>
+            <tr><th>Record classification</th>
               <th>Runway</th>
               <th>Flight</th>
               <th>Operation</th>
@@ -118,6 +124,7 @@ function RunwayUtilization({ token, api }) {
           <tbody>
             {items.map(item => (
               <tr key={item.id} onClick={() => setSelected(item)}>
+                  <td><small>{item.record_kind === 'planning_draft' ? 'Planning draft — no operational evidence' : 'Recorded source'}</small></td>
                 <td><strong>{item.runway_id}</strong></td>
                 <td>{item.flight_number}</td>
                 <td><span style={{ color: item.operation_type === 'arrival' ? '#22c55e' : '#38bdf8', fontWeight: 600 }}>{item.operation_type}</span></td>
@@ -238,9 +245,9 @@ function RunwayUtilization({ token, api }) {
             </div>
           )}
 
-          {aiData.raw_response && (
+          {aiData && (
             <div className="ai-analysis-container">
-              <pre style={{ whiteSpace: 'pre-wrap', color: '#cbd5e1', fontSize: 13 }}>{aiData.raw_response}</pre>
+              <AIReport response={aiData} title="Advisory planning report" />
             </div>
           )}
         </div>
@@ -251,7 +258,7 @@ function RunwayUtilization({ token, api }) {
           title={`Runway Op - ${selected.runway_id} / ${selected.flight_number}`}
           item={selected}
           fields={detailFields}
-          onClose={() => setSelected(null)}
+          onClose={() => {recordWrite.cancel();setSelected(null);}}
           onEdit={handleEdit}
           onDelete={handleDelete}
         />
@@ -262,7 +269,7 @@ function RunwayUtilization({ token, api }) {
           title={editItem ? 'Edit Runway Operation' : 'New Runway Operation'}
           fields={formFields}
           initialData={editItem}
-          onClose={() => { setShowForm(false); setEditItem(null); }}
+          onClose={() => {recordWrite.cancel();setShowForm(false);setEditItem(null);}}
           onSave={handleSave}
         />
       )}

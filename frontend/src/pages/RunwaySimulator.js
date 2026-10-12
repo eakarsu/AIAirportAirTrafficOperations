@@ -1,3 +1,5 @@
+import AIReport from '../components/AIReport';
+import useNativeAIRequest from '../components/useNativeAIRequest';
 import React, { useState } from 'react';
 
 function RunwaySimulator({ token, api }) {
@@ -19,13 +21,17 @@ function RunwaySimulator({ token, api }) {
     return map[(i || '').toLowerCase()] || '#94a3b8';
   };
 
+  const aiRequest = useNativeAIRequest(() => setLoading(false));
+
   const runSimulation = async () => {
+    const aiOwner = aiRequest.begin(); if (!aiOwner) return;
+    try {
     if (!scenario.description) { setError('Please describe the scenario.'); return; }
     setLoading(true);
     setError('');
     setData(null);
     try {
-      const res = await fetch(`${api}/api/ai/runway-simulator`, {
+      const res = await aiRequest.fetch(aiOwner,`${api}/api/ai/runway-simulator`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ scenario }),
@@ -34,13 +40,17 @@ function RunwaySimulator({ token, api }) {
       if (!res.ok) throw new Error(result.error || 'Simulation failed');
       setData(result);
     } catch (err) {
+      if (!aiRequest.isCurrent(aiOwner)) return;
       setError(err.message);
     }
-    setLoading(false);
+    if (aiRequest.isCurrent(aiOwner)) setLoading(false);
+    } finally { if (aiRequest.isCurrent(aiOwner)) { setLoading(false); aiRequest.finish(aiOwner); } }
   };
 
   return (
     <div>
+      <div className="ai-example-actions">{['Quick review','Planning scenario','Detailed review'].map((label,index)=><button type="button" className="btn-cancel" disabled={loading} key={label} onClick={()=>{setScenario({description:['Fictional training scenario: review additional flights before human capacity review.','Fictional planning scenario: assess a proposed runway closure with verified sources required.','Fictional detailed scenario: assess adverse weather assumptions for human review.'][index],extra_flights:[5,10,15][index],runway_closure:['Proposed 04L closure','Proposed 04R closure','Proposed 13L closure'][index],weather_change:['Illustrative clear weather assumption','Illustrative reduced visibility assumption','Illustrative crosswind assumption'][index],ground_stop_minutes:[10,20,30][index]});setData(null);setError('');}}>{label}</button>)}</div><p>Examples fill all editable scenario fields, including optional fields. Review assumptions before requesting AI; actual sources and permissions remain separate.</p>
+      {aiRequest.notice && <p role="status">{aiRequest.notice}</p>}<button type="button" className="btn-cancel" onClick={aiRequest.cancel}>Cancel AI request</button>
       <div className="page-header">
         <h1><i className="fas fa-flask"></i> AI Runway Capacity Simulator</h1>
       </div>
@@ -107,13 +117,13 @@ function RunwaySimulator({ token, api }) {
         </div>
         <div style={{ marginTop: 16 }}>
           <button className="btn-ai" onClick={runSimulation} disabled={loading}>
-            <i className="fas fa-play"></i> {loading ? 'Simulating...' : 'Run Simulation'}
+            <i className="fas fa-play"></i> {loading ? 'Simulating...' : 'Generate with OpenRouter'}
           </button>
         </div>
       </div>
 
       {error && (
-        <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>
+        <div role="alert" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', padding: 12, borderRadius: 8, color: '#ef4444', marginBottom: 16 }}>
           <i className="fas fa-exclamation-triangle"></i> {error}
         </div>
       )}
@@ -202,9 +212,9 @@ function RunwaySimulator({ token, api }) {
             </div>
           )}
 
-          {data.raw_response && (
+          {data && (
             <div className="ai-analysis-container">
-              <pre style={{ whiteSpace: 'pre-wrap', color: '#cbd5e1', fontSize: 12 }}>{data.raw_response}</pre>
+              <AIReport response={data} title="Advisory planning report" />
             </div>
           )}
         </div>

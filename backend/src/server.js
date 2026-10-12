@@ -27,6 +27,8 @@ app.use(express.json({ limit: '5mb' }));
 // Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/runtime-ai', require('./routes/runtimeAi'));
+// Explicit actor-owned planning handlers precede global legacy domain routes.
+app.use('/api', require('./routes/ownedPlanning'));
 app.use('/api/gates', require('./routes/gates'));
 app.use('/api/crews', require('./routes/crews'));
 app.use('/api/delays', require('./routes/delays'));
@@ -58,6 +60,14 @@ if (fs.existsSync(buildDir)) {
   });
 }
 
+
+// Advisory AI reports only; native execution and approval routes stay unchanged.
+const aiWorkspaceSupport = require("../aiWorkspaceAdapters.cjs");
+const aiWorkspaceDatabase = require("./db.js");
+app.use('/api/report-workspace', require("../aiWorkspace.cjs").createAIWorkspaceRouter({
+  pool: aiWorkspaceDatabase, authenticateToken: require("./middleware/auth.js").authenticateToken,
+  aiRateLimiter: aiWorkspaceSupport.createWorkspaceLimiter(), features: require("../aiWorkspaceFeatures.json"),
+}));
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });

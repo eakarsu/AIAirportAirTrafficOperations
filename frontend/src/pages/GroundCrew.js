@@ -1,3 +1,8 @@
+import NativeAIContext from '../components/NativeAIContext';
+import AIReport from '../components/AIReport';
+import useNativeAIRequest from '../components/useNativeAIRequest';
+import useNativeRecordMutation from '../components/useNativeRecordMutation';
+import useNativeRecordList from '../components/useNativeRecordList';
 import React, { useState, useEffect, useCallback } from 'react';
 import DetailModal from '../components/DetailModal';
 import FormModal from '../components/FormModal';
@@ -37,58 +42,22 @@ function GroundCrew({ token, api }) {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [aiData, setAiData] = useState(null);
+  const [aiError, setAiError] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
-  const [loading, setLoading] = useState(false);
+
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${api}/api/crews?page=${page}&limit=20`, { headers: { Authorization: `Bearer ${token}` } });
-      const data = await res.json();
-      if (data.data) {
-        setItems(data.data);
-        setPagination(data.pagination);
-      } else {
-        setItems(Array.isArray(data) ? data : []);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-    setLoading(false);
-  }, [api, token, page]);
+  const { loading: recordLoading, error: recordError, reload: fetchData } = useNativeRecordList({
+    url: `${api}/api/crews?page=${page}&limit=20`, token,
+    onLoad: data => { setItems(data.items); if (data.pagination) setPagination(data.pagination); },
+  });
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Delete this crew?')) return;
-    try {
-      await fetch(`${api}/api/crews/${id}`, { method: 'DELETE', headers });
-    } catch (err) {
-      console.error(err);
-    }
-    setSelected(null);
-    fetchData();
-  };
+  const recordWrite = useNativeRecordMutation({token,api,route:'crews',reload:fetchData,onSaved:()=>{setShowForm(false);setEditItem(null);},onDeleted:()=>setSelected(null)});
 
-  const handleSave = async (data) => {
-    const url = editItem ? `${api}/api/crews/${editItem.id}` : `${api}/api/crews`;
-    const method = editItem ? 'PUT' : 'POST';
-    try {
-      const res = await fetch(url, { method, headers, body: JSON.stringify(data) });
-      if (!res.ok) {
-        const err = await res.json();
-        alert(err.errors ? err.errors.map(e => e.msg).join(', ') : err.error || 'Save failed');
-        return;
-      }
-    } catch (err) {
-      alert('Network error: ' + err.message);
-      return;
-    }
-    setShowForm(false);
-    setEditItem(null);
-    fetchData();
-  };
+  const handleDelete = id => recordWrite.remove(id);
+  const handleSave = data => recordWrite.save(data, editItem?.id);
 
   const handleEdit = (item) => {
     setSelected(null);
@@ -96,22 +65,35 @@ function GroundCrew({ token, api }) {
     setShowForm(true);
   };
 
+  const [planningContext,setPlanningContext]=useState('');
+  const aiRequest = useNativeAIRequest(() => setAiLoading(false));
+
   const runAI = async () => {
-    setAiLoading(true);
+    const aiOwner = aiRequest.begin(); if (!aiOwner) return;
+    try {
+    setAiLoading(true);setAiError('');
     setAiData(null);
     try {
-      const res = await fetch(`${api}/api/ai/optimize-crews`, { method: 'POST', headers });
+      const res = await aiRequest.fetch(aiOwner,`${api}/api/ai/optimize-crews`, { method: 'POST', headers,
+        body: JSON.stringify({planning_context:planningContext}) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'AI analysis failed');
       setAiData(data);
     } catch (err) {
-      setAiData({ raw_response: 'Error: ' + err.message });
+      if (!aiRequest.isCurrent(aiOwner)) return;
+      setAiData(null);setAiError(err.message);
     }
-    setAiLoading(false);
+    if (aiRequest.isCurrent(aiOwner)) setAiLoading(false);
+    } finally { if (aiRequest.isCurrent(aiOwner)) { setAiLoading(false); aiRequest.finish(aiOwner); } }
   };
 
   return (
     <div>
+      <NativeAIContext title="GroundCrew" value={planningContext} onChange={setPlanningContext} disabled={aiLoading}/>
+      {recordWrite.error && <div role="alert" className="ai-error">{recordWrite.error}</div>}
+      <p className="planning-record-notice">Saved planning drafts are proposals. They do not establish flights, clearances, gate assignments, crew authorization, baggage custody, weather observations, predictions, incident occurrence or completed maintenance.</p>
+      {aiError && <div role="alert" className="ai-error">{aiError}</div>}
+      {aiRequest.notice && <p role="status">{aiRequest.notice}</p>}<button type="button" className="btn-cancel" onClick={aiRequest.cancel}>Cancel AI request</button>
       <div className="page-header">
         <h1><i className="fas fa-users"></i> Ground Crew Scheduling</h1>
         <div className="header-actions">
@@ -124,13 +106,14 @@ function GroundCrew({ token, api }) {
         </div>
       </div>
 
-      {loading ? (
+      {recordLoading ? (
         <div className="ai-loading"><div className="spinner"></div><span>Loading...</span></div>
       ) : (
         <div className="data-table-container">
+          {recordError && <div role="alert" className="ai-error">Could not load records: {recordError} <button type="button" className="btn-cancel" onClick={fetchData}>Retry loading records</button></div>}
           <table className="data-table">
             <thead>
-              <tr>
+              <tr><th>Record classification</th>
                 <th>Crew Name</th>
                 <th>Type</th>
                 <th>Members</th>
@@ -144,6 +127,7 @@ function GroundCrew({ token, api }) {
             <tbody>
               {items.map(item => (
                 <tr key={item.id} onClick={() => setSelected(item)}>
+                  <td><small>{item.record_kind === 'planning_draft' ? 'Planning draft — no operational evidence' : 'Recorded source'}</small></td>
                   <td><strong>{item.crew_name}</strong></td>
                   <td>{item.crew_type}</td>
                   <td>{item.members_count}</td>
@@ -154,8 +138,8 @@ function GroundCrew({ token, api }) {
                   <td><span className={`status-badge status-${item.status}`}>{item.status}</span></td>
                 </tr>
               ))}
-              {items.length === 0 && (
-                <tr><td colSpan={8} style={{ textAlign: 'center', padding: 40, color: '#64748b' }}>No crews found.</td></tr>
+              {!recordError && items.length === 0 && (
+                <tr><td colSpan={9} style={{ textAlign: 'center', padding: 40, color: '#64748b' }}>No crews found.</td></tr>
               )}
             </tbody>
           </table>
@@ -259,9 +243,9 @@ function GroundCrew({ token, api }) {
             </div>
           )}
 
-          {aiData.raw_response && (
+          {aiData && (
             <div className="ai-analysis-container">
-              <pre style={{ whiteSpace: 'pre-wrap', color: '#cbd5e1', fontSize: 13 }}>{aiData.raw_response}</pre>
+              <AIReport response={aiData} title="Advisory planning report" />
             </div>
           )}
         </div>
@@ -272,7 +256,7 @@ function GroundCrew({ token, api }) {
           title={`Crew - ${selected.crew_name}`}
           item={selected}
           fields={detailFields}
-          onClose={() => setSelected(null)}
+          onClose={() => {recordWrite.cancel();setSelected(null);}}
           onEdit={handleEdit}
           onDelete={handleDelete}
         />
@@ -283,7 +267,7 @@ function GroundCrew({ token, api }) {
           title={editItem ? 'Edit Crew' : 'New Crew'}
           fields={formFields}
           initialData={editItem}
-          onClose={() => { setShowForm(false); setEditItem(null); }}
+          onClose={() => {recordWrite.cancel();setShowForm(false);setEditItem(null);}}
           onSave={handleSave}
         />
       )}

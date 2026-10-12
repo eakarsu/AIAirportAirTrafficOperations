@@ -1,3 +1,5 @@
+import useNativeRecordMutation from '../components/useNativeRecordMutation';
+import useNativeRecordList from '../components/useNativeRecordList';
 import React, { useState, useEffect, useCallback } from 'react';
 import DetailModal from '../components/DetailModal';
 import FormModal from '../components/FormModal';
@@ -33,31 +35,17 @@ function MaintenanceLogs({ token, api }) {
   const [editItem, setEditItem] = useState(null);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-  const fetchData = useCallback(async () => {
-    const res = await fetch(`${api}/api/maintenance?page=1&limit=100`, { headers: { Authorization: `Bearer ${token}` } });
-    const data = await res.json();
-    setItems(Array.isArray(data) ? data : (data.data || []));
-  }, [api, token]);
+  const { loading: recordLoading, error: recordError, reload: fetchData } = useNativeRecordList({
+    url: `${api}/api/maintenance?page=1&limit=100`, token,
+    onLoad: data => { setItems(data.items); },
+  });
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Delete this maintenance record?')) return;
-    await fetch(`${api}/api/maintenance/${id}`, { method: 'DELETE', headers });
-    setSelected(null);
-    fetchData();
-  };
+  const recordWrite = useNativeRecordMutation({token,api,route:'maintenance',reload:fetchData,onSaved:()=>{setShowForm(false);setEditItem(null);},onDeleted:()=>setSelected(null)});
 
-  const handleSave = async (data) => {
-    if (editItem) {
-      await fetch(`${api}/api/maintenance/${editItem.id}`, { method: 'PUT', headers, body: JSON.stringify(data) });
-    } else {
-      await fetch(`${api}/api/maintenance`, { method: 'POST', headers, body: JSON.stringify(data) });
-    }
-    setShowForm(false);
-    setEditItem(null);
-    fetchData();
-  };
+  const handleDelete = id => recordWrite.remove(id);
+  const handleSave = data => recordWrite.save(data, editItem?.id);
 
   const handleEdit = (item) => {
     setSelected(null);
@@ -82,6 +70,8 @@ function MaintenanceLogs({ token, api }) {
 
   return (
     <div>
+      {recordWrite.error && <div role="alert" className="ai-error">{recordWrite.error}</div>}
+      <p className="planning-record-notice">Saved planning drafts are proposals. They do not establish flights, clearances, gate assignments, crew authorization, baggage custody, weather observations, predictions, incident occurrence or completed maintenance.</p>
       <div className="page-header">
         <h1><i className="fas fa-wrench"></i> Maintenance Logs</h1>
         <div className="header-actions">
@@ -95,9 +85,10 @@ function MaintenanceLogs({ token, api }) {
       </div>
 
       <div className="data-table-container">
+          {recordError && <div role="alert" className="ai-error">Could not load records: {recordError} <button type="button" className="btn-cancel" onClick={fetchData}>Retry loading records</button></div>}
         <table className="data-table">
           <thead>
-            <tr>
+            <tr><th>Record classification</th>
               <th>Equipment</th>
               <th>ID</th>
               <th>Type</th>
@@ -111,6 +102,7 @@ function MaintenanceLogs({ token, api }) {
           <tbody>
             {items.map(item => (
               <tr key={item.id} onClick={() => setSelected(item)}>
+                  <td><small>{item.record_kind === 'planning_draft' ? 'Planning draft — no operational evidence' : 'Recorded source'}</small></td>
                 <td><strong>{item.equipment_type}</strong></td>
                 <td>{item.equipment_id}</td>
                 <td><span className={`status-badge status-${item.maintenance_type}`}>{item.maintenance_type}</span></td>
@@ -130,7 +122,7 @@ function MaintenanceLogs({ token, api }) {
           title={`Maintenance - ${selected.equipment_type} (${selected.equipment_id})`}
           item={selected}
           fields={detailFields}
-          onClose={() => setSelected(null)}
+          onClose={() => {recordWrite.cancel();setSelected(null);}}
           onEdit={handleEdit}
           onDelete={handleDelete}
         />
@@ -141,7 +133,7 @@ function MaintenanceLogs({ token, api }) {
           title={editItem ? 'Edit Work Order' : 'New Work Order'}
           fields={formFields}
           initialData={editItem}
-          onClose={() => { setShowForm(false); setEditItem(null); }}
+          onClose={() => {recordWrite.cancel();setShowForm(false);setEditItem(null);}}
           onSave={handleSave}
         />
       )}

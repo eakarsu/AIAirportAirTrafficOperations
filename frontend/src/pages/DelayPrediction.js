@@ -1,3 +1,8 @@
+import NativeAIContext from '../components/NativeAIContext';
+import AIReport from '../components/AIReport';
+import useNativeAIRequest from '../components/useNativeAIRequest';
+import useNativeRecordMutation from '../components/useNativeRecordMutation';
+import useNativeRecordList from '../components/useNativeRecordList';
 import React, { useState, useEffect, useCallback } from 'react';
 import DetailModal from '../components/DetailModal';
 import FormModal from '../components/FormModal';
@@ -10,7 +15,7 @@ const detailFields = [
   { key: 'scheduled_departure', label: 'Scheduled Departure', render: v => v ? new Date(v).toLocaleString() : 'N/A' },
   { key: 'predicted_delay_min', label: 'Predicted Delay', render: v => `${v} minutes` },
   { key: 'delay_reason', label: 'Delay Reason' },
-  { key: 'confidence_score', label: 'Confidence', render: v => `${(v * 100).toFixed(0)}%` },
+  { key: 'confidence_score', label: 'Confidence', render: v => v == null ? 'Not measured' : `${(v * 100).toFixed(0)}%` },
   { key: 'rebooking_suggested', label: 'Rebooking Suggested', render: v => v ? 'Yes' : 'No' },
   { key: 'affected_passengers', label: 'Affected Passengers' },
 ];
@@ -36,55 +41,22 @@ function DelayPrediction({ token, api }) {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [aiData, setAiData] = useState(null);
+  const [aiError, setAiError] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
-  const [loading, setLoading] = useState(false);
+
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${api}/api/delays?page=${page}&limit=20`, { headers: { Authorization: `Bearer ${token}` } });
-      const data = await res.json();
-      if (data.data) {
-        setItems(data.data);
-        setPagination(data.pagination);
-      } else {
-        setItems(Array.isArray(data) ? data : []);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-    setLoading(false);
-  }, [api, token, page]);
+  const { loading: recordLoading, error: recordError, reload: fetchData } = useNativeRecordList({
+    url: `${api}/api/delays?page=${page}&limit=20`, token,
+    onLoad: data => { setItems(data.items); if (data.pagination) setPagination(data.pagination); },
+  });
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Delete this delay prediction?')) return;
-    await fetch(`${api}/api/delays/${id}`, { method: 'DELETE', headers });
-    setSelected(null);
-    fetchData();
-  };
+  const recordWrite = useNativeRecordMutation({token,api,route:'delays',reload:fetchData,onSaved:()=>{setShowForm(false);setEditItem(null);},onDeleted:()=>setSelected(null)});
 
-  const handleSave = async (data) => {
-    const payload = { ...data, rebooking_suggested: data.rebooking_suggested === 'true' || data.rebooking_suggested === true };
-    const url = editItem ? `${api}/api/delays/${editItem.id}` : `${api}/api/delays`;
-    const method = editItem ? 'PUT' : 'POST';
-    try {
-      const res = await fetch(url, { method, headers, body: JSON.stringify(payload) });
-      if (!res.ok) {
-        const err = await res.json();
-        alert(err.errors ? err.errors.map(e => e.msg).join(', ') : err.error || 'Save failed');
-        return;
-      }
-    } catch (err) {
-      alert('Network error: ' + err.message);
-      return;
-    }
-    setShowForm(false);
-    setEditItem(null);
-    fetchData();
-  };
+  const handleDelete = id => recordWrite.remove(id);
+  const handleSave = data => recordWrite.save(data, editItem?.id);
 
   const handleEdit = (item) => {
     setSelected(null);
@@ -92,18 +64,26 @@ function DelayPrediction({ token, api }) {
     setShowForm(true);
   };
 
+  const [planningContext,setPlanningContext]=useState('');
+  const aiRequest = useNativeAIRequest(() => setAiLoading(false));
+
   const runAI = async () => {
-    setAiLoading(true);
+    const aiOwner = aiRequest.begin(); if (!aiOwner) return;
+    try {
+    setAiLoading(true);setAiError('');
     setAiData(null);
     try {
-      const res = await fetch(`${api}/api/ai/predict-delays`, { method: 'POST', headers });
+      const res = await aiRequest.fetch(aiOwner,`${api}/api/ai/predict-delays`, { method: 'POST', headers,
+        body: JSON.stringify({planning_context:planningContext}) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'AI analysis failed');
       setAiData(data);
     } catch (err) {
-      setAiData({ raw_response: 'Error: ' + err.message });
+      if (!aiRequest.isCurrent(aiOwner)) return;
+      setAiData(null);setAiError(err.message);
     }
-    setAiLoading(false);
+    if (aiRequest.isCurrent(aiOwner)) setAiLoading(false);
+    } finally { if (aiRequest.isCurrent(aiOwner)) { setAiLoading(false); aiRequest.finish(aiOwner); } }
   };
 
   const getDelayColor = (min) => {
@@ -120,6 +100,11 @@ function DelayPrediction({ token, api }) {
 
   return (
     <div>
+      <NativeAIContext title="DelayPrediction" value={planningContext} onChange={setPlanningContext} disabled={aiLoading}/>
+      {recordWrite.error && <div role="alert" className="ai-error">{recordWrite.error}</div>}
+      <p className="planning-record-notice">Saved planning drafts are proposals. They do not establish flights, clearances, gate assignments, crew authorization, baggage custody, weather observations, predictions, incident occurrence or completed maintenance.</p>
+      {aiError && <div role="alert" className="ai-error">{aiError}</div>}
+      {aiRequest.notice && <p role="status">{aiRequest.notice}</p>}<button type="button" className="btn-cancel" onClick={aiRequest.cancel}>Cancel AI request</button>
       <div className="page-header">
         <h1><i className="fas fa-clock"></i> Delay Prediction & Rebooking</h1>
         <div className="header-actions">
@@ -127,18 +112,19 @@ function DelayPrediction({ token, api }) {
             <i className="fas fa-plus"></i> New Prediction
           </button>
           <button className="btn-ai" onClick={runAI} disabled={aiLoading}>
-            <i className="fas fa-robot"></i> {aiLoading ? 'Analyzing...' : 'AI Predict'}
+            <i className="fas fa-robot"></i> {aiLoading ? 'Analyzing...' : 'Generate with OpenRouter'}
           </button>
         </div>
       </div>
 
-      {loading ? (
+      {recordLoading ? (
         <div className="ai-loading"><div className="spinner"></div><span>Loading...</span></div>
       ) : (
         <div className="data-table-container">
+          {recordError && <div role="alert" className="ai-error">Could not load records: {recordError} <button type="button" className="btn-cancel" onClick={fetchData}>Retry loading records</button></div>}
           <table className="data-table">
             <thead>
-              <tr>
+              <tr><th>Record classification</th>
                 <th>Flight</th>
                 <th>Airline</th>
                 <th>Route</th>
@@ -153,19 +139,20 @@ function DelayPrediction({ token, api }) {
             <tbody>
               {items.map(item => (
                 <tr key={item.id} onClick={() => setSelected(item)}>
+                  <td><small>{item.record_kind === 'planning_draft' ? 'Planning draft — no operational evidence' : 'Recorded source'}</small></td>
                   <td><strong>{item.flight_number}</strong></td>
                   <td>{item.airline}</td>
                   <td>{item.origin} → {item.destination}</td>
                   <td>{new Date(item.scheduled_departure).toLocaleString()}</td>
-                  <td><strong style={{ color: getDelayColor(item.predicted_delay_min) }}>{item.predicted_delay_min} min</strong></td>
+                  <td><strong style={{ color: getDelayColor(item.predicted_delay_min) }}>{item.predicted_delay_min == null ? 'Not predicted' : item.predicted_delay_min + ' min'}</strong></td>
                   <td>{item.delay_reason}</td>
-                  <td>{(item.confidence_score * 100).toFixed(0)}%</td>
+                  <td>{item.confidence_score == null ? 'Not measured' : (item.confidence_score * 100).toFixed(0) + '%'}</td>
                   <td>{item.rebooking_suggested ? <span style={{ color: '#ef4444' }}>Yes</span> : <span style={{ color: '#22c55e' }}>No</span>}</td>
                   <td>{item.affected_passengers}</td>
                 </tr>
               ))}
-              {items.length === 0 && (
-                <tr><td colSpan={9} style={{ textAlign: 'center', padding: 40, color: '#64748b' }}>No delay predictions found.</td></tr>
+              {!recordError && items.length === 0 && (
+                <tr><td colSpan={10} style={{ textAlign: 'center', padding: 40, color: '#64748b' }}>No delay predictions found.</td></tr>
               )}
             </tbody>
           </table>
@@ -283,9 +270,9 @@ function DelayPrediction({ token, api }) {
             </div>
           )}
 
-          {aiData.raw_response && (
+          {aiData && (
             <div className="ai-analysis-container">
-              <pre style={{ whiteSpace: 'pre-wrap', color: '#cbd5e1', fontSize: 13 }}>{aiData.raw_response}</pre>
+              <AIReport response={aiData} title="Advisory planning report" />
             </div>
           )}
         </div>
@@ -296,7 +283,7 @@ function DelayPrediction({ token, api }) {
           title={`Delay - ${selected.flight_number}`}
           item={selected}
           fields={detailFields}
-          onClose={() => setSelected(null)}
+          onClose={() => {recordWrite.cancel();setSelected(null);}}
           onEdit={handleEdit}
           onDelete={handleDelete}
         />
@@ -307,7 +294,7 @@ function DelayPrediction({ token, api }) {
           title={editItem ? 'Edit Delay Prediction' : 'New Delay Prediction'}
           fields={formFields}
           initialData={editItem}
-          onClose={() => { setShowForm(false); setEditItem(null); }}
+          onClose={() => {recordWrite.cancel();setShowForm(false);setEditItem(null);}}
           onSave={handleSave}
         />
       )}
