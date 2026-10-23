@@ -40,6 +40,7 @@ import CodexCustomVizFeature from './pages/CodexCustomVizFeature';
 import CodexOperationsFeature from './pages/CodexOperationsFeature';
 
 import TimelineView from './pages/TimelineView';
+import FeaturePackPanel from './pages/FeaturePackPanel';
 
 const API = process.env.REACT_APP_API_URL || 'http://localhost:4000';
 
@@ -78,6 +79,7 @@ function App() {
         <main className="main-content">
           <Routes>
         <Route path="/insights/timeline" element={<TimelineView />} />
+        <Route path="/feature-pack" element={<FeaturePackPanel token={token} api={API + '/api'} />} />
         <Route path="/codex/custom-viz" element={<CodexCustomVizFeature />} />
         <Route path="/codex/operations" element={<CodexOperationsFeature />} />
 

@@ -26,17 +26,20 @@ router.get('/', authenticateToken, async (req, res) => {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
     const offset = (page - 1) * limit;
 
-    // Optional filter
+    // Optional filters: type, status, and q (search across flight fields)
     const type = req.query.type; // 'departure' | 'arrival'
-    let whereClause = '';
-    const params = [limit, offset];
-    if (type && ['departure', 'arrival'].includes(type)) {
-      whereClause = 'WHERE flight_type = $3';
-      params.push(type);
-    }
+    const conds = []; const filterParams = [];
+    if (type && ['departure', 'arrival'].includes(type)) { filterParams.push(type); conds.push(`flight_type = $${filterParams.length}`); }
+    if (req.query.status) { filterParams.push(req.query.status); conds.push(`status = $${filterParams.length}`); }
+    if (req.query.q) { filterParams.push(`%${req.query.q}%`); const n = filterParams.length; conds.push(`(flight_number ILIKE $${n} OR airline ILIKE $${n} OR origin ILIKE $${n} OR destination ILIKE $${n})`); }
+    const whereSql = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+    let whereClause = whereSql;
+    const params = [limit, offset, ...filterParams];
+    // Re-index filter placeholders after LIMIT/OFFSET placeholders ($1,$2)
+    whereClause = whereSql.replace(/\$(\d+)/g, (m, n) => `$${Number(n) + 2}`);
 
     const [countResult, dataResult] = await Promise.all([
-      pool.query(`SELECT COUNT(*) FROM flight_schedule ${type ? 'WHERE flight_type = $1' : ''}`, type ? [type] : []),
+      pool.query(`SELECT COUNT(*) FROM flight_schedule ${whereSql}`, filterParams),
       pool.query(`SELECT * FROM flight_schedule ${whereClause} ORDER BY scheduled_time ASC LIMIT $1 OFFSET $2`, params),
     ]);
 

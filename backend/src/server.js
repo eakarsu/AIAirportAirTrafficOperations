@@ -41,6 +41,7 @@ app.use('/api/maintenance', require('./routes/maintenance'));
 app.use('/api/stats', require('./routes/stats'));
 app.use('/api/ai', require('./routes/ai'));
 app.use('/api/operational-plans', require('./routes/operationsWorkflow'));
+app.use('/api', require('./routes/featurePack'));
 
 // Map new AI feature routes into the server for clarity
 // All new AI endpoints are in routes/ai.js under /api/ai/*
